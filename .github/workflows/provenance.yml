@@ -1,0 +1,8 @@
+# Calls the reusable provenance workflow from the home repo. Every commit above the upstream
+# tag must be a Monero cherry-pick (or one of the few allowed own files). See
+# https://github.com/zephyr-backports/zephyr-backports/blob/main/docs/POLICY.md
+name: provenance
+on: [push, pull_request]
+jobs:
+  provenance:
+    uses: zephyr-backports/zephyr-backports/.github/workflows/provenance.yml@main
