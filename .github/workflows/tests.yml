@@ -1,0 +1,8 @@
+# Calls the reusable unit-test workflow from the home repo. Builds this tree with BUILD_TESTS=ON
+# and runs Monero's unit tests, which must keep passing above the upstream tag. See
+# https://github.com/zephyr-backports/zephyr-backports/blob/main/docs/POLICY.md
+name: tests
+on: [push, pull_request]
+jobs:
+  tests:
+    uses: zephyr-backports/zephyr-backports/.github/workflows/tests.yml@main
