@@ -2,7 +2,8 @@
 
 This is **not** a new Zephyr. It is `ZephyrProtocol/zephyr` at an upstream release tag plus a
 small number of security fixes cherry-picked from `monero-project/monero` (`release-v0.18`),
-the project Zephyr is derived from. Tags are `vX.Y.Z-sec.N`: upstream `vX.Y.Z` + N backports.
+the project Zephyr is derived from. Tags are `vX.Y.Z-sec.N`: upstream `vX.Y.Z` + N backport batches of this fork (the companion
+zephyr-cpp tag has its own N; the release sets are listed in the home repository).
 Full policy: https://github.com/zephyr-backports/zephyr-backports (docs/POLICY.md).
 
 Rules, in short:
