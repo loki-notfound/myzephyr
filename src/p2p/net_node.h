@@ -300,6 +300,7 @@ namespace nodetool
   private:
     const std::vector<std::string> m_seed_nodes_list =
     {
+      "remote-node.zephyrprotocol.com"
     };
 
     bool islimitup=false;
