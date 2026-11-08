@@ -1,3 +1,27 @@
+## myzephyr (personal build)
+
+This branch is a personal build of the Zephyr daemon by its maintainer. It is **not**
+part of zephyr-backports and not an official Zephyr release. It is the signed
+zephyr-backports tag `v2.3.0-sec.2` plus a small number of own commits, each marked
+`Origin: myzephyr` and signed by the maintainer key
+`31DA 39AB 43E0 CA67 F1F3  A661 BA2A FF22 DF8A 4A13`. The next section describes that base.
+
+Own commits above the base:
+- The official public node `remote-node.zephyrprotocol.com` is added to the mainnet
+  DNS seeds, and its address `24.199.101.125:17766` to the mainnet fallback seeds. The
+  compiled-in seeds no longer accepted connections, so a new node found no peer.
+- Build and test tooling: `contrib/myzephyr/` and
+  `.github/workflows/daemon-release-baseline.yml`.
+
+Compatibility: no change to consensus, transaction relay, the P2P protocol, RPC, wallet
+or database formats; the version number stays upstream's. Interoperability with upstream
+nodes and wallets is still being tested, and no release has been published.
+
+Verifying a build: `contrib/myzephyr/README.md` describes the pinned builder, the source
+checks and the build manifest. The base tag is signed by
+`FB39 94F0 997C A6F0 43D7  2491 9EFF 03F5 27D2 40A1`; both public keys are in
+`contrib/myzephyr/keys/`.
+
 ## Security backports (this fork)
 
 This is **not** a new Zephyr. It is `ZephyrProtocol/zephyr` at an upstream release tag plus a

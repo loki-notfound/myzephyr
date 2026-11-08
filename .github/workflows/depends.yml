@@ -2,6 +2,7 @@ name: ci/gh-actions/depends
 
 on:
   push:
+    branches-ignore: [ci/daemon-release-baseline]
     paths-ignore:
       - 'docs/**'
       - '**/README.md'

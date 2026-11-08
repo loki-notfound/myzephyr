@@ -1,0 +1,271 @@
+# Build and test zephyrd for Linux x86_64 from the pushed head of this branch.
+#
+# Every job checks out the commit that triggered the run (GITHUB_SHA) and nothing
+# else. The two compiling jobs use separate checkouts (src-release, src-tests) with
+# full history and submodules, fetch the signed zephyr-backports base tag into a
+# ref outside refs/tags, and run contrib/myzephyr/verify-source.sh before building:
+# base tag object and signature (pinned primary fingerprint), HEAD = GITHUB_SHA,
+# base ancestry, every own commit above the base (no merges, "Origin: myzephyr",
+# maintainer signature with pinned primary fingerprint, allowed paths only), signed
+# tags at HEAD, submodule pins and a clean tree. The expected version follows from
+# the commit and its tags, as in cmake/GitVersion.cmake; nothing overrides it.
+#
+# Gates, each its own job, none skipped or allowed to fail silently:
+#   tooling-selftest  self-tests of the start-check harness and the unit-test judge
+#   release-build     portable Release build, ELF/runtime-requirement checks, manifest
+#   unit-tests        separate TESTS=1 (Debug) depends build, unit_tests, inventory and XML
+#   runtime-offline   strict offline start on ubuntu-24.04 and in the Debian 11 builder userland
+#   bootstrap         default public peer discovery from an empty directory (no peer options)
+# Logs and artifacts are uploaded even when a gate fails; artifact names carry the
+# commit, and the downstream jobs check the manifest against GITHUB_SHA.
+name: daemon-release-baseline
+
+on:
+  push:
+    branches: [ci/daemon-release-baseline]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daemon-release-baseline-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  BASE_REPOSITORY_URL: https://github.com/zephyr-backports/zephyr.git
+  BASE_TAG: v2.3.0-sec.2
+  BASE_COMMIT: 8c6a120256b4bd887d6e7167d929d76e3507e0e5
+  BASE_TAG_OBJECT: b84129b0d914c60d4dea506ca01f30091c31e9e1
+  BASE_FINGERPRINT: FB3994F0997CA6F043D724919EFF03F527D240A1
+  MAINTAINER_FINGERPRINT: 31DA39AB43E0CA67F1F3A661BA2AFF22DF8A4A13
+  EXPECTED_UNIT_TESTS_PASSED: "1006"
+  RETENTION_DAYS: "14"
+
+jobs:
+  tooling-selftest:
+    name: tooling self-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Assert event and commit
+        run: |
+          test "$GITHUB_EVENT_NAME" = push
+          test "$GITHUB_REF" = refs/heads/ci/daemon-release-baseline
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+          test "$(git -C tooling rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Harness self-test
+        run: python3 -I tooling/contrib/myzephyr/tests/harness-selftest.py "$RUNNER_TEMP/out/harness"
+      - name: Unit-test judge self-test (fixed fixtures, not daemon results)
+        if: always()
+        run: python3 -I tooling/contrib/myzephyr/tests/unit-summary-selftest.py "$RUNNER_TEMP/out/unit-summary"
+      - name: Upload self-test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tooling-selftest-${{ github.sha }}
+          path: ${{ runner.temp }}/out
+          retention-days: ${{ env.RETENTION_DAYS }}
+          if-no-files-found: warn
+
+  release-build:
+    name: release build (linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Check out the pushed commit with history and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: src-release
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify the source (base tag, own commits, head, tree)
+        run: |
+          test "$GITHUB_EVENT_NAME" = push
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          git -C src-release fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
+          src-release/contrib/myzephyr/verify-source.sh --checkout src-release --expected-head "$GITHUB_SHA" \
+            --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
+            --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
+            --base-key src-release/contrib/myzephyr/keys/zephyr-backports-release.asc --base-fingerprint "$BASE_FINGERPRINT" \
+            --maintainer-key src-release/contrib/myzephyr/keys/myzephyr-maintainer.asc --maintainer-fingerprint "$MAINTAINER_FINGERPRINT" \
+            --out "$out/source-identity.txt"
+          cat "$out/source-identity.txt"
+          python3 -I src-release/contrib/myzephyr/zephyrd-check.py expected-version --checkout src-release > "$out/expected-version.txt"
+          cat "$out/expected-version.txt"
+      - name: Build (depends, configure, target daemon)
+        run: JOBS=4 src-release/contrib/myzephyr/linux/run-builder.sh docker release src-release "$RUNNER_TEMP/out/build-logs"
+      - name: Check ELF runtime requirements
+        run: src-release/contrib/myzephyr/check-elf.sh src-release/build/release/bin/zephyrd "$RUNNER_TEMP/out/elf-report.txt"
+      - name: Check version output against the expected version
+        run: |
+          out="$RUNNER_TEMP/out"
+          src-release/build/release/bin/zephyrd --version > "$out/version.txt"
+          cat "$out/version.txt"
+          v=$(cat "$out/expected-version.txt")
+          test "$(wc -l < "$out/version.txt")" = 1
+          [[ "$(cat "$out/version.txt")" == "Zephyr '"*"' (v$v)" ]]
+      - name: Write manifest and stage artifact
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/out"
+          bin=src-release/build/release/bin/zephyrd
+          test -x "$bin" || { echo "no binary was built"; exit 1; }
+          cp "$bin" "$out/zephyrd"
+          test -f "$out/version.txt" || "$bin" --version > "$out/version.txt"
+          test -f "$out/elf-report.txt" || src-release/contrib/myzephyr/check-elf.sh "$bin" "$out/elf-report.txt" || true
+          python3 -I src-release/contrib/myzephyr/make-manifest.py --source-identity "$out/source-identity.txt" \
+            --expected-version "$out/expected-version.txt" --builder-logs "$out/build-logs" \
+            --elf-report "$out/elf-report.txt" --binary "$out/zephyrd" --version-output "$out/version.txt" \
+            --build-dir src-release/build/release --recipe-dir src-release/contrib/myzephyr/linux \
+            --out "$out/manifest.json"
+          ( cd "$out" && sha256sum zephyrd manifest.json expected-version.txt source-identity.txt > SHA256SUMS )
+          cat "$out/SHA256SUMS"
+      - name: Upload release artifact and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zephyrd-linux-x86_64-${{ github.sha }}
+          path: ${{ runner.temp }}/out
+          retention-days: ${{ env.RETENTION_DAYS }}
+          if-no-files-found: error
+
+  unit-tests:
+    name: unit tests (depends TESTS=1, Debug)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Check out the pushed commit with history and submodules
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: src-tests
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify the source (base tag, own commits, head, tree)
+        run: |
+          test "$GITHUB_EVENT_NAME" = push
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          git -C src-tests fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
+          src-tests/contrib/myzephyr/verify-source.sh --checkout src-tests --expected-head "$GITHUB_SHA" \
+            --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
+            --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
+            --base-key src-tests/contrib/myzephyr/keys/zephyr-backports-release.asc --base-fingerprint "$BASE_FINGERPRINT" \
+            --maintainer-key src-tests/contrib/myzephyr/keys/myzephyr-maintainer.asc --maintainer-fingerprint "$MAINTAINER_FINGERPRINT" \
+            --out "$out/source-identity.txt"
+          cat "$out/source-identity.txt"
+      - name: Build tests (depends TESTS=1, unit_tests, test_notifier)
+        run: JOBS=4 src-tests/contrib/myzephyr/linux/run-builder.sh docker tests src-tests "$RUNNER_TEMP/out/build-logs"
+      - name: Run unit tests (all enabled tests, zero failures or skips, reference count)
+        run: |
+          EXPECTED_PASSED="$EXPECTED_UNIT_TESTS_PASSED" \
+            src-tests/contrib/myzephyr/linux/run-unit-tests.sh docker src-tests "$RUNNER_TEMP/out/unit-tests"
+      - name: Upload test logs, inventory and XML
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unit-tests-linux-x86_64-${{ github.sha }}
+          path: ${{ runner.temp }}/out
+          retention-days: ${{ env.RETENTION_DAYS }}
+          if-no-files-found: error
+
+  runtime-offline:
+    name: offline start (${{ matrix.userland }})
+    needs: [tooling-selftest, release-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        userland: [ubuntu-24.04-host, debian-11-builder-image]
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Download release artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: zephyrd-linux-x86_64-${{ github.sha }}
+          path: art
+      - name: Verify artifact hashes and commit binding
+        run: |
+          test "$(git -C tooling rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -I tooling/contrib/myzephyr/verify-artifact.py art "$GITHUB_SHA"
+          chmod 0755 art/zephyrd
+      - name: Strict offline start on the runner
+        if: matrix.userland == 'ubuntu-24.04-host'
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python3 -I tooling/contrib/myzephyr/zephyrd-check.py offline --zephyrd art/zephyrd \
+            --data-dir "$RUNNER_TEMP/data-offline" --log-dir "$RUNNER_TEMP/out/offline" \
+            --expect-version "$(cat art/expected-version.txt)"
+      - name: Strict offline start in the Debian 11 builder userland (glibc 2.31)
+        if: matrix.userland == 'debian-11-builder-image'
+        run: |
+          docker build -t myzephyr-linux-builder:local -f tooling/contrib/myzephyr/linux/Dockerfile tooling/contrib/myzephyr/linux
+          mkdir -p "$RUNNER_TEMP/out"
+          docker run --rm --network=none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD/art:/art:ro" -v "$PWD/tooling/contrib/myzephyr:/harness:ro" -v "$RUNNER_TEMP/out:/out" \
+            myzephyr-linux-builder:local sh -c 'ldd --version | head -n 1; python3 -I /harness/zephyrd-check.py offline --zephyrd /art/zephyrd --data-dir /tmp/data-offline --log-dir /out/offline --expect-version "$(cat /art/expected-version.txt)"'
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-offline-${{ matrix.userland }}-${{ github.sha }}
+          path: ${{ runner.temp }}/out
+          retention-days: ${{ env.RETENTION_DAYS }}
+          if-no-files-found: error
+
+  bootstrap:
+    name: default public bootstrap (no peer options)
+    needs: [tooling-selftest, release-build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Download release artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: zephyrd-linux-x86_64-${{ github.sha }}
+          path: art
+      - name: Verify artifact hashes and commit binding
+        run: |
+          test "$(git -C tooling rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 -I tooling/contrib/myzephyr/verify-artifact.py art "$GITHUB_SHA"
+          chmod 0755 art/zephyrd
+      - name: Default discovery from an empty directory (handshake and validated height increase)
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          python3 -I tooling/contrib/myzephyr/zephyrd-check.py discovery --zephyrd art/zephyrd \
+            --data-dir "$RUNNER_TEMP/data-discovery" --log-dir "$RUNNER_TEMP/out/discovery" \
+            --expect-version "$(cat art/expected-version.txt)" --limit 600 --poll 15 --stop-on-pass
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bootstrap-default-${{ github.sha }}
+          path: ${{ runner.temp }}/out
+          retention-days: ${{ env.RETENTION_DAYS }}
+          if-no-files-found: error
