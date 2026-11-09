@@ -1,0 +1,231 @@
+{
+  "artifact": {
+    "expected_version": "2.3.0-e66283f38",
+    "name": "zephyrd",
+    "sha256": "80f3031667aaf15824839f41e4b406d24cab05ebaa95ea8bd49fd0096fc8db69",
+    "size": 25037560,
+    "target": "x86_64-unknown-linux-gnu",
+    "version_output": "Zephyr 'Version 2.3' (v2.3.0-e66283f38)"
+  },
+  "base": {
+    "commit": "8c6a120256b4bd887d6e7167d929d76e3507e0e5",
+    "repository": "https://github.com/zephyr-backports/zephyr.git",
+    "signer_primary_fingerprint": "FB3994F0997CA6F043D724919EFF03F527D240A1",
+    "signing_key": "AFCB159642DE74B65D183AA20937555B1B70815A",
+    "tag": "v2.3.0-sec.2",
+    "tag_object": "b84129b0d914c60d4dea506ca01f30091c31e9e1"
+  },
+  "build": {
+    "cmake_options": [
+      "-DCMAKE_TOOLCHAIN_FILE=<src>/contrib/depends/x86_64-unknown-linux-gnu/share/toolchain.cmake",
+      "-DCMAKE_SKIP_RPATH=ON"
+    ],
+    "cmake_target": "daemon",
+    "cpu_flags": {
+      "-maes": {
+        "count": 85,
+        "examples": [
+          "contrib/epee/src/CMakeFiles/epee.dir",
+          "contrib/epee/src/CMakeFiles/epee_readline.dir",
+          "contrib/epee/src/CMakeFiles/obj_epee.dir",
+          "contrib/epee/src/CMakeFiles/obj_epee_readline.dir",
+          "external/randomx/CMakeFiles/randomx-benchmark.dir"
+        ]
+      },
+      "-mavx2": {
+        "count": 1,
+        "examples": [
+          "external/randomx/CMakeFiles/randomx.dir/src/argon2_avx2.c.o"
+        ]
+      },
+      "-mssse3": {
+        "count": 1,
+        "examples": [
+          "external/randomx/CMakeFiles/randomx.dir/src/argon2_ssse3.c.o"
+        ]
+      }
+    },
+    "recipe": {
+      "files": {
+        "Dockerfile": "300c71c622215085f12bbc996165268c7cfc5aad522c30c4974c0168da5f7a71",
+        "build-in-container.sh": "ef678aac45959c3c413eeb1ce710ca1d36aea3534473cfb25eef06dacca95658",
+        "run-builder.sh": "aa9be5ce419a67e494628208682f06e854dde9d63d9c3ab20d7dacebeb55a628"
+      },
+      "sha256": "14b6de28d878de0c4d38958b2efe453ca1dd40f063ce8721e3b2751e32bf1a0f"
+    },
+    "steps": [
+      "STEP depends start 2026-11-09T01:02:12Z",
+      "+ make -C contrib/depends HOST=x86_64-unknown-linux-gnu -j4 x86_64_linux_CC=gcc-9 -m64 x86_64_linux_CXX=g++-9 -m64",
+      "STEP depends end 2026-11-09T01:09:12Z exit 0 tee 0 duration 420s",
+      "STEP configure start 2026-11-09T01:09:12Z",
+      "+ cmake -S . -B build/release -DCMAKE_TOOLCHAIN_FILE=/src/contrib/depends/x86_64-unknown-linux-gnu/share/toolchain.cmake -DCMAKE_SKIP_RPATH=ON",
+      "STEP configure end 2026-11-09T01:09:18Z exit 0 tee 0 duration 6s",
+      "STEP build start 2026-11-09T01:09:18Z",
+      "+ cmake --build build/release --target daemon --parallel 4",
+      "STEP build end 2026-11-09T01:12:49Z exit 0 tee 0 duration 211s",
+      "BUILD release ok",
+      "container exit 0"
+    ]
+  },
+  "builder": {
+    "apt_snapshot": "20260824T000000Z",
+    "apt_state": [
+      "snapshot 20260824T000000Z",
+      "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260824T000000Z bullseye main",
+      "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260824T000000Z bullseye-updates main",
+      "deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260824T000000Z bullseye-security main",
+      "== snapshot.debian.org_archive_debian-security_20260824T000000Z_dists_bullseye-security_InRelease 27d0b1c8d7c6febfd2a1d28bf7e647ed72ae803fbdb8844d0d348c8de3c983e8",
+      "Origin: Debian",
+      "Suite: oldoldstable-security",
+      "Version: 11",
+      "Codename: bullseye-security",
+      "Date: Sun, 23 Aug 2026 23:23:27 UTC",
+      "Valid-Until: Sun, 30 Aug 2026 23:23:27 UTC",
+      "== snapshot.debian.org_archive_debian_20260824T000000Z_dists_bullseye-updates_InRelease e7c2ada1e773d679722b9ca1be52c8286213593273c6abaa718f608b9502a089",
+      "Origin: Debian",
+      "Suite: oldoldstable-updates",
+      "Version: 11-updates",
+      "Codename: bullseye-updates",
+      "Date: Sat, 09 Aug 2025 08:55:05 UTC",
+      "== snapshot.debian.org_archive_debian_20260824T000000Z_dists_bullseye_InRelease 7917d4598768bfc4a25776eb0f6bf2f7d1f13301c2dc1e16467ef170dd752d40",
+      "Origin: Debian",
+      "Suite: oldoldstable",
+      "Version: 11.11",
+      "Codename: bullseye",
+      "Date: Sat, 09 Aug 2025 09:16:30 UTC"
+    ],
+    "base_image": "docker.io/library/debian@sha256:c0a2ad73611131275b0e9a2e7544cfe3725f4268d4085d8c6f61fdd55aef7917",
+    "image_id": "sha256:f603bb36360137cf9b8371433acfe530592dcd2e2f5b45579f4f215ae9033314",
+    "package_count": 312,
+    "package_inventory_sha256": "b48a87b3d41b59a94d8739e8b2ecfb75b00c9eb95a5b0a20b643880816e48c7b",
+    "source_date_epoch": 1794185241,
+    "toolchain": [
+      "mode=release",
+      "SOURCE_DATE_EPOCH=1794185241 (2026-11-09T00:47:21Z)",
+      "JOBS=4 umask=0022 uid=1001",
+      "host_cc=gcc-9 -m64",
+      "host_cxx=g++-9 -m64",
+      "gcc-9 (Debian 9.3.0-22) 9.3.0",
+      "g++-9 (Debian 9.3.0-22) 9.3.0",
+      "gcc (Debian 10.2.1-6) 10.2.1 20210110",
+      "cmake version 3.18.4",
+      "GNU Make 4.3",
+      "GNU ld (GNU Binutils for Debian) 2.35.2",
+      "git version 2.30.2",
+      "HEAD e66283f3812e8ebac7911ea55146267effc24150",
+      "tags at HEAD: "
+    ]
+  },
+  "checks": {
+    "binary_matches_elf_report": true,
+    "expected_version_matches_source_state": true,
+    "version_output_matches_expected": true,
+    "workflow_sha_is_source_commit": true
+  },
+  "own_commit_signer_primary_fingerprint": "31DA39AB43E0CA67F1F3A661BA2AFF22DF8A4A13",
+  "runtime_requirements": {
+    "build_id": "04309d1e27f4fb08e80dd30a35b35e94032198fc",
+    "cxx_version_needs": "none",
+    "elf_checks": "passed",
+    "interpreter": "/lib64/ld-linux-x86-64.so.2",
+    "max_glibc": "GLIBC_2.29",
+    "max_glibc_allowed": "GLIBC_2.29",
+    "needed": [
+      "ld-linux-x86-64.so.2",
+      "libc.so.6",
+      "libm.so.6",
+      "libpthread.so.0"
+    ],
+    "rpath_runpath": "none",
+    "symbols_above_glibc_2_17": [
+      "GLIBC_2.23:lgamma",
+      "GLIBC_2.25:explicit_bzero",
+      "GLIBC_2.25:__explicit_bzero_chk",
+      "GLIBC_2.27:glob",
+      "GLIBC_2.29:exp",
+      "GLIBC_2.29:log",
+      "GLIBC_2.29:pow"
+    ]
+  },
+  "schema": "myzephyr/daemon-build-manifest/2",
+  "source": {
+    "commit": "e66283f3812e8ebac7911ea55146267effc24150",
+    "commit_time": 1794185241,
+    "own_commits": [
+      {
+        "commit": "2b0e1b978e3c9d02cf177e92eb9e2772f21c39d0",
+        "paths": [
+          "src/p2p/net_node.h",
+          "src/p2p/net_node.inl"
+        ]
+      },
+      {
+        "commit": "d2d4b094336b21915124877be66ecb79df9a40ed",
+        "paths": [
+          ".github/workflows/build.yml",
+          ".github/workflows/daemon-release-baseline.yml",
+          ".github/workflows/depends.yml",
+          ".github/workflows/provenance.yml",
+          ".github/workflows/tests.yml",
+          "README.md",
+          "contrib/myzephyr/README.md",
+          "contrib/myzephyr/check-elf.sh",
+          "contrib/myzephyr/keys/myzephyr-maintainer.asc",
+          "contrib/myzephyr/keys/zephyr-backports-release.asc",
+          "contrib/myzephyr/linux/Dockerfile",
+          "contrib/myzephyr/linux/build-in-container.sh",
+          "contrib/myzephyr/linux/run-builder.sh",
+          "contrib/myzephyr/linux/run-unit-tests.sh",
+          "contrib/myzephyr/make-manifest.py",
+          "contrib/myzephyr/manifest.schema.json",
+          "contrib/myzephyr/tests/harness-selftest.py",
+          "contrib/myzephyr/tests/stub-zephyrd.py",
+          "contrib/myzephyr/tests/unit-summary-selftest.py",
+          "contrib/myzephyr/unit-test-summary.py",
+          "contrib/myzephyr/verify-artifact.py",
+          "contrib/myzephyr/verify-source.sh",
+          "contrib/myzephyr/zephyrd-check.py"
+        ]
+      },
+      {
+        "commit": "5794c32c086ef61a774fedfeecf07b33e1c7df79",
+        "paths": [
+          "contrib/depends/packages/gtest.mk"
+        ]
+      },
+      {
+        "commit": "e66283f3812e8ebac7911ea55146267effc24150",
+        "paths": [
+          "README.md",
+          "contrib/myzephyr/README.md",
+          "contrib/myzephyr/verify-source.sh"
+        ]
+      }
+    ],
+    "submodules": {
+      "external/miniupnp": "544e6fcc73c5ad9af48a8985c94f0f1d742ef2e0",
+      "external/randomx": "12f2c2ffe2108d6cf54c391fee33c8bc3646cdab",
+      "external/rapidjson": "129d19ba7f496df5e33658527a7158c79b99c21c",
+      "external/rapidjson/thirdparty/gtest": "0a439623f75c029912728d80cb7f1b8b48739ca4",
+      "external/supercop": "633500ad8c8759995049ccd022107d1fa8a1bbc9",
+      "external/trezor-common": "bc28c316d05bf1e9ebfe3d7df1ab25831d98d168",
+      "external/trezor-common/defs/ethereum/chains": "805ae42ecc53aa6493949b1e9c1da41e036c1845",
+      "external/trezor-common/defs/ethereum/chains/website": "e573725226abe2d37484912e96b8756005208db1",
+      "external/trezor-common/defs/ethereum/tokens": "0eeaf9b9f13b5e6538da26d079e2b968dc8bb23f"
+    },
+    "tags": []
+  },
+  "workflow": {
+    "event_name": "push",
+    "job": "release-build",
+    "ref": "refs/heads/ci/daemon-release-baseline",
+    "repository": "loki-notfound/myzephyr",
+    "run_attempt": "1",
+    "run_id": "42543200624",
+    "run_number": "2",
+    "server_url": "https://github.com",
+    "sha": "e66283f3812e8ebac7911ea55146267effc24150",
+    "workflow_ref": "loki-notfound/myzephyr/.github/workflows/daemon-release-baseline.yml@refs/heads/ci/daemon-release-baseline",
+    "workflow_sha": "e66283f3812e8ebac7911ea55146267effc24150"
+  }
+}

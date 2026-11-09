@@ -1,0 +1,18 @@
+{
+  "about": "Trusted context of the fixture: run 42543200624 attempt 1 as reported by the GitHub API (not taken from the manifest), and the base policy pinned in the workflow. The fixture files are the metadata of that run's zephyrd-linux-x86_64 artifact; the 25 MB binary is not included, the self-test substitutes placeholder bytes and records their hash and size in its working copy.",
+  "expected-commit": "e66283f3812e8ebac7911ea55146267effc24150",
+  "expected-version": "2.3.0-e66283f38",
+  "repository": "loki-notfound/myzephyr",
+  "ref": "refs/heads/ci/daemon-release-baseline",
+  "workflow-ref": "loki-notfound/myzephyr/.github/workflows/daemon-release-baseline.yml@refs/heads/ci/daemon-release-baseline",
+  "run-id": "42543200624",
+  "run-attempt": "1",
+  "server-url": "https://github.com",
+  "producer-job": "release-build",
+  "base-repository": "https://github.com/zephyr-backports/zephyr.git",
+  "base-tag": "v2.3.0-sec.2",
+  "base-tag-object": "b84129b0d914c60d4dea506ca01f30091c31e9e1",
+  "base-commit": "8c6a120256b4bd887d6e7167d929d76e3507e0e5",
+  "base-fingerprint": "FB3994F0997CA6F043D724919EFF03F527D240A1",
+  "maintainer-fingerprint": "31DA39AB43E0CA67F1F3A661BA2AFF22DF8A4A13"
+}

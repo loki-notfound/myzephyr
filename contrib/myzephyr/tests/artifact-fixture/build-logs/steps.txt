@@ -1,0 +1,11 @@
+STEP depends start 2026-11-09T01:02:12Z
++ make -C contrib/depends HOST=x86_64-unknown-linux-gnu -j4 x86_64_linux_CC=gcc-9 -m64 x86_64_linux_CXX=g++-9 -m64
+STEP depends end 2026-11-09T01:09:12Z exit 0 tee 0 duration 420s
+STEP configure start 2026-11-09T01:09:12Z
++ cmake -S . -B build/release -DCMAKE_TOOLCHAIN_FILE=/src/contrib/depends/x86_64-unknown-linux-gnu/share/toolchain.cmake -DCMAKE_SKIP_RPATH=ON
+STEP configure end 2026-11-09T01:09:18Z exit 0 tee 0 duration 6s
+STEP build start 2026-11-09T01:09:18Z
++ cmake --build build/release --target daemon --parallel 4
+STEP build end 2026-11-09T01:12:49Z exit 0 tee 0 duration 211s
+BUILD release ok
+container exit 0
