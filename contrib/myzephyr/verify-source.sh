@@ -20,7 +20,8 @@
 #            "Origin: myzephyr", the signature is good and was made by the key with
 #            primary fingerprint maintainer-FPR, and it changes only allowed paths
 #            (regular files, no symlinks or submodule pointers). A commit changes
-#            either daemon source (src/) or CI/documentation files, never both.
+#            either source (daemon source under src/, or the one build recipe
+#            contrib/depends/packages/gtest.mk) or CI/documentation files, never both.
 #   tags     every tag in refs/tags that points at HEAD makes the build report a
 #            "release" version; each one must be annotated and signed by the
 #            maintainer key.
@@ -35,8 +36,8 @@
 set -euo pipefail
 export LC_ALL=C
 
-ALLOWED_PATHS='^(src/p2p/net_node\.h|src/p2p/net_node\.inl|README\.md|\.github/workflows/(daemon-release-baseline|build|depends|tests|provenance)\.yml|contrib/myzephyr/.+)$'
-SOURCE_PATHS='^src/'
+ALLOWED_PATHS='^(src/p2p/net_node\.h|src/p2p/net_node\.inl|contrib/depends/packages/gtest\.mk|README\.md|\.github/workflows/(daemon-release-baseline|build|depends|tests|provenance)\.yml|contrib/myzephyr/.+)$'
+SOURCE_PATHS='^(src/|contrib/depends/packages/gtest\.mk$)'
 
 usage() { echo "usage: see the header of $0" >&2; exit 2; }
 fail() { echo "verify-source: $*" >&2; exit 1; }
@@ -141,7 +142,7 @@ for c in "${commits[@]}"; do
     paths+=("$path")
   done < <(g diff-tree --no-commit-id --no-renames -r --raw "$c")
   [ "${#paths[@]}" -ge 1 ] || fail "$c changes no file"
-  if [[ "$kinds" == *source* && "$kinds" == *ci* ]]; then fail "$c mixes daemon source and CI/documentation paths"; fi
+  if [[ "$kinds" == *source* && "$kinds" == *ci* ]]; then fail "$c mixes source (daemon or build recipe) and CI/documentation paths"; fi
   own_lines+=("own_commit $c=${paths[*]}")
   prev=$c
 done

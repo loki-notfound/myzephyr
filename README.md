@@ -12,6 +12,9 @@ Own commits above the base:
   compiled-in seeds no longer accepted connections, so a new node found no peer.
 - Build and test tooling: `contrib/myzephyr/` and
   `.github/workflows/daemon-release-baseline.yml`.
+- The GoogleTest recipe of `contrib/depends` (used only for unit-test builds) uses the
+  compiler and tools depends selected instead of assuming they are in its native tool
+  directory, and builds the requested Debug type.
 
 Compatibility: no change to consensus, transaction relay, the P2P protocol, RPC, wallet
 or database formats; the version number stays upstream's. Interoperability with upstream

@@ -15,8 +15,10 @@ checkout. That commit must be the signed zephyr-backports base tag plus own comm
 - every commit above the base is checked one by one: one parent (no merges), the
   trailer `Origin: myzephyr`, a good signature by the maintainer key (primary
   fingerprint `31DA 39AB 43E0 CA67 F1F3  A661 BA2A FF22 DF8A 4A13`), and changes only
-  to `src/p2p/net_node.h`, `src/p2p/net_node.inl`, `README.md`, the workflow and this
-  directory; a commit changes either daemon source or tooling/documentation;
+  to `src/p2p/net_node.h`, `src/p2p/net_node.inl`, the GoogleTest build recipe
+  `contrib/depends/packages/gtest.mk`, `README.md`, the workflow and this directory;
+  a commit changes either source (daemon or that build recipe) or
+  tooling/documentation;
 - tags at the head must be signed by the maintainer key; submodules must be at their
   recorded commits; the checkout must be clean.
 
