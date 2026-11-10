@@ -1,0 +1,498 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "myzephyr/daemon-cross-build-manifest/1",
+  "title": "myzephyr cross-built zephyrd: macOS x86_64, Windows x86_64",
+  "description": "Written by make-cross-manifest.py, checked by verify-cross-artifact.py. The binary cannot run on the build machine: the version is checked as an embedded string and by the native runtime job, never by executing it here.",
+  "type": "object",
+  "required": [
+    "schema",
+    "artifact",
+    "source",
+    "base",
+    "own_commit_signer_primary_fingerprint",
+    "workflow",
+    "builder",
+    "build",
+    "static_report",
+    "embedded",
+    "checks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "myzephyr/daemon-cross-build-manifest/1"
+    },
+    "artifact": {
+      "type": "object",
+      "required": [
+        "name",
+        "size",
+        "sha256",
+        "expected_version",
+        "target",
+        "format"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "expected_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-(release|[0-9a-f]{9})$"
+        },
+        "target": {
+          "$ref": "#/$defs/cross_target"
+        },
+        "format": {
+          "enum": [
+            "macho",
+            "pe"
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "target": {
+              "const": "x86_64-apple-darwin"
+            },
+            "format": {
+              "const": "macho"
+            },
+            "name": {
+              "const": "zephyrd"
+            }
+          }
+        },
+        {
+          "properties": {
+            "target": {
+              "const": "x86_64-w64-mingw32"
+            },
+            "format": {
+              "const": "pe"
+            },
+            "name": {
+              "const": "zephyrd.exe"
+            }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "commit",
+        "commit_time",
+        "tags",
+        "own_commits",
+        "submodules"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "commit_time": {
+          "type": "integer"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "object",
+              "signer_primary_fingerprint"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "object": {
+                "$ref": "#/$defs/sha1"
+              },
+              "signer_primary_fingerprint": {
+                "$ref": "#/$defs/fingerprint"
+              }
+            }
+          }
+        },
+        "own_commits": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "commit",
+              "paths"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "commit": {
+                "$ref": "#/$defs/sha1"
+              },
+              "paths": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "submodules": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/sha1"
+          }
+        }
+      }
+    },
+    "base": {
+      "type": "object",
+      "required": [
+        "repository",
+        "tag",
+        "tag_object",
+        "commit",
+        "signer_primary_fingerprint",
+        "signing_key"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag_object": {
+          "$ref": "#/$defs/sha1"
+        },
+        "commit": {
+          "$ref": "#/$defs/sha1"
+        },
+        "signer_primary_fingerprint": {
+          "$ref": "#/$defs/fingerprint"
+        },
+        "signing_key": {
+          "$ref": "#/$defs/fingerprint"
+        }
+      }
+    },
+    "own_commit_signer_primary_fingerprint": {
+      "$ref": "#/$defs/fingerprint"
+    },
+    "workflow": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "repository",
+            "ref",
+            "sha",
+            "workflow_ref",
+            "workflow_sha",
+            "event_name",
+            "run_id",
+            "run_number",
+            "run_attempt",
+            "job",
+            "server_url"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ref": {
+              "type": "string",
+              "pattern": "^refs/heads/"
+            },
+            "sha": {
+              "$ref": "#/$defs/sha1"
+            },
+            "workflow_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workflow_sha": {
+              "$ref": "#/$defs/sha1"
+            },
+            "event_name": {
+              "const": "push"
+            },
+            "run_id": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "run_number": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "run_attempt": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "job": {
+              "type": "string",
+              "minLength": 1
+            },
+            "server_url": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "local_build"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "local_build": {
+              "const": true
+            }
+          }
+        }
+      ]
+    },
+    "builder": {
+      "type": "object",
+      "required": [
+        "base_image",
+        "apt_snapshot",
+        "apt_state",
+        "image_id",
+        "toolchain",
+        "package_inventory_sha256",
+        "package_count",
+        "source_date_epoch",
+        "target"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "base_image": {
+          "type": "string",
+          "pattern": "@sha256:[0-9a-f]{64}$"
+        },
+        "apt_snapshot": {
+          "type": "string",
+          "pattern": "^[0-9]{8}T[0-9]{6}Z$"
+        },
+        "apt_state": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "image_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toolchain": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "package_inventory_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "package_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_date_epoch": {
+          "type": "integer"
+        },
+        "target": {
+          "$ref": "#/$defs/cross_target"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "required": [
+        "recipe",
+        "steps",
+        "cmake_options",
+        "cmake_target",
+        "cpu_flags"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "recipe": {
+          "type": "object",
+          "required": [
+            "files",
+            "sha256"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "type": "object",
+              "required": [
+                "Dockerfile",
+                "run-builder.sh",
+                "build-in-container.sh"
+              ],
+              "additionalProperties": {
+                "$ref": "#/$defs/sha256"
+              }
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256"
+            }
+          }
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cmake_options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cmake_target": {
+          "const": "daemon"
+        },
+        "cpu_flags": {
+          "type": "object"
+        }
+      }
+    },
+    "static_report": {
+      "type": "object",
+      "required": [
+        "format",
+        "values",
+        "checks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "enum": [
+            "macho",
+            "pe"
+          ]
+        },
+        "values": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "checks": {
+          "const": "passed"
+        }
+      }
+    },
+    "embedded": {
+      "type": "object",
+      "required": [
+        "versions",
+        "seeds",
+        "checks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "versions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "seeds": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "string"
+          }
+        },
+        "checks": {
+          "const": "passed"
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "expected_version_matches_source_state",
+        "embedded_version_matches_expected",
+        "binary_matches_static_report",
+        "binary_matches_embedded_report",
+        "workflow_sha_is_source_commit"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "expected_version_matches_source_state": {
+          "const": true
+        },
+        "embedded_version_matches_expected": {
+          "const": true
+        },
+        "binary_matches_static_report": {
+          "const": true
+        },
+        "binary_matches_embedded_report": {
+          "const": true
+        },
+        "workflow_sha_is_source_commit": {
+          "enum": [
+            true,
+            "not-applicable"
+          ]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{40}$"
+    },
+    "cross_target": {
+      "enum": [
+        "x86_64-apple-darwin",
+        "x86_64-w64-mingw32"
+      ]
+    }
+  }
+}

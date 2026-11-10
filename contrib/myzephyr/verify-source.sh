@@ -119,7 +119,8 @@ head=$(g rev-parse HEAD)
 
 # history above the base
 g merge-base --is-ancestor "$base_commit" HEAD || fail "base $base_commit is not an ancestor of HEAD"
-mapfile -t commits < <(g rev-list --reverse --topo-order "$base_commit..HEAD")
+commits=()   # a read loop, not mapfile: the macOS runner's /bin/bash is 3.2
+while IFS= read -r c; do commits+=("$c"); done < <(g rev-list --reverse --topo-order "$base_commit..HEAD")
 [ "${#commits[@]}" -ge 1 ] || fail "no own commit above the base"
 prev=$base_commit
 own_lines=()

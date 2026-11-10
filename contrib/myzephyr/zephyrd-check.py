@@ -19,9 +19,17 @@ Modes
 
 Every launch uses loopback listeners, --no-igd, --non-interactive, an empty explicit
 config file, and new data and log directories (existing ones are refused). Only the
-child started here is ever signalled; there is no kill by name. All waits are bounded
-by monotonic deadlines. Exit status: 0 pass, 1 check failed, 2 usage or precondition
-error (nothing started), 3 the child had to be killed or a listener stayed open.
+child started here is ever signalled; there is no kill by name.
+
+The stop request is the daemon's own clean-shutdown signal on each platform:
+SIGTERM on Linux and macOS; on Windows, where SIGTERM would be TerminateProcess,
+CTRL_BREAK_EVENT to the child, which is started in its own process group
+(CREATE_NEW_PROCESS_GROUP) and handled by zephyrd like Ctrl+C (src/common/util.h).
+If the child does not exit within --stop-timeout it is killed, and that is a failed
+cleanup on every platform. The listener check connects to each port on 127.0.0.1.
+All waits are bounded by monotonic deadlines. Exit status: 0 pass, 1 check failed,
+2 usage or precondition error (nothing started), 3 the child had to be killed or a
+listener stayed open.
 Results: <log-dir>/result.json, polls in <log-dir>/polls.jsonl, daemon log and console.
 """
 import argparse
@@ -39,6 +47,10 @@ import urllib.error
 import urllib.request
 
 EXIT_PASS, EXIT_FAIL, EXIT_USAGE, EXIT_CLEANUP = 0, 1, 2, 3
+IS_WINDOWS = os.name == "nt"
+# the checker's own signals that end a run early (SIGHUP does not exist on Windows)
+OWN_SIGNALS = [s for s in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK") if hasattr(signal, s)
+               and (s != "SIGBREAK" or IS_WINDOWS)]
 HANDSHAKE_STATES = {"synchronizing", "standby", "normal", "idle"}
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-(release|[0-9a-f]{9})$")
 # failed requests: refused/reset connections, timeouts, HTTP errors, non-JSON bodies
@@ -170,6 +182,23 @@ def port_listening(port):
         return False
 
 
+# ---------------------------------------------------------------- platform mechanics
+def popen_kwargs():
+    """Process-group options for the child: its own session (POSIX) or process group (Windows)."""
+    if IS_WINDOWS:
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def request_stop(proc):
+    """Send the daemon's clean-shutdown request to our child; returns the method name."""
+    if IS_WINDOWS:
+        os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
+        return "CTRL_BREAK_EVENT"
+    proc.send_signal(signal.SIGTERM)
+    return "SIGTERM"
+
+
 # ---------------------------------------------------------------- run
 class Run:
     def __init__(self, args):
@@ -212,7 +241,7 @@ class Run:
         self.result["started"] = utc()
         self.t0 = time.monotonic()
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=console,
-                                     stderr=subprocess.STDOUT, start_new_session=True)
+                                     stderr=subprocess.STDOUT, **popen_kwargs())
         console.close()
         self.result["pid"] = self.proc.pid
         print(f"zephyrd-check: started pid {self.proc.pid} at {self.result['started']}")
@@ -365,18 +394,24 @@ class Run:
             self.result["final_get_info"] = f"{type(e).__name__}: {e}"
 
     def stop(self):
-        """SIGTERM to our child, bounded wait, bounded kill, listener check. Returns ok."""
+        """Stop request to our child (request_stop), bounded wait, bounded kill, listener check.
+        Returns ok."""
         ok = True
         if self.proc is None:
             return True
         if self.proc.poll() is None:
             self.result["sigterm_at"] = utc()
-            self.proc.send_signal(signal.SIGTERM)
+            try:
+                self.result["stop_method"] = request_stop(self.proc)
+            except OSError as e:
+                self.result["stop_method"] = f"failed: {type(e).__name__}: {e}"
+                self.problem(f"stop request to pid {self.proc.pid} failed: {e}")
             try:
                 self.proc.wait(timeout=self.a.stop_timeout)
             except subprocess.TimeoutExpired:
                 ok = False
-                self.problem(f"pid {self.proc.pid} did not exit within {self.a.stop_timeout}s of SIGTERM; killing it")
+                self.problem(f"pid {self.proc.pid} did not exit within {self.a.stop_timeout}s of "
+                             f"{self.result.get('stop_method')}; killing it")
                 self.proc.kill()
                 try:
                     self.proc.wait(timeout=10)
@@ -425,8 +460,8 @@ def run_daemon_mode(a):
     def on_signal(signum, _frame):
         raise Interrupted(signal.Signals(signum).name)
 
-    for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        signal.signal(s, on_signal)
+    for s in OWN_SIGNALS:
+        signal.signal(getattr(signal, s), on_signal)
 
     verdict_ok = False
     cleanup_ok = True
@@ -451,8 +486,8 @@ def run_daemon_mode(a):
         run.problem(f"interrupted by {e}")
         verdict_ok = False
     finally:
-        for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-            signal.signal(s, signal.SIG_IGN)
+        for s in OWN_SIGNALS:
+            signal.signal(getattr(signal, s), signal.SIG_IGN)
         cleanup_ok = run.stop()
         if run.polls:
             run.polls.close()

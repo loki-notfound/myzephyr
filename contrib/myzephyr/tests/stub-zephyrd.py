@@ -142,4 +142,6 @@ def on_term(signum, frame):
 
 
 signal.signal(signal.SIGTERM, signal.SIG_IGN if scenario == "ignore-term" else on_term)
+if os.name == "nt":  # zephyrd-check stops a Windows child with CTRL_BREAK_EVENT (SIGBREAK here)
+    signal.signal(signal.SIGBREAK, signal.SIG_IGN if scenario == "ignore-term" else on_term)
 srv.serve_forever()

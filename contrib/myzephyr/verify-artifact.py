@@ -270,6 +270,12 @@ def glibc_key(v):
 
 
 class Verifier:
+    # what the artifact must contain; the cross-target verifier (verify-cross-artifact.py) overrides these
+    SUMMED = SUMMED
+    REQUIRED_FILES = REQUIRED_FILES
+    SCHEMA_FILE = "manifest.schema.json"
+    SCHEMA_ID = SCHEMA_ID
+
     def __init__(self, a):
         self.a = a
         self.results = []   # (area, ok, message)
@@ -303,7 +309,7 @@ class Verifier:
                 if stat.S_ISLNK(mode) or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
                     bad.append(os.path.relpath(p, d))
         self.check("files", not bad, "no symlinks or special files" + (f": {sorted(bad)}" if bad else ""))
-        for rel in REQUIRED_FILES:
+        for rel in self.REQUIRED_FILES:
             p = os.path.join(d, rel)
             self.check("files", os.path.isfile(p) and not os.path.islink(p), f"{rel} present")
         sums_path = os.path.join(d, "SHA256SUMS")
@@ -326,8 +332,8 @@ class Verifier:
             if not self.check("files", name not in sums, f"SHA256SUMS entry {name} listed once"):
                 continue
             sums[name] = m.group(1)
-        self.eq("files", "SHA256SUMS entries", sorted(sums), sorted(SUMMED))
-        for name in SUMMED:
+        self.eq("files", "SHA256SUMS entries", sorted(sums), sorted(self.SUMMED))
+        for name in self.SUMMED:
             p = os.path.join(d, name)
             if name in sums and self.check("files", os.path.isfile(p) and not os.path.islink(p), f"{name} is a regular file"):
                 self.check("files", sha256_file(p) == sums[name], f"{name} matches SHA256SUMS")
@@ -335,9 +341,9 @@ class Verifier:
 
     def schema(self):
         here = os.path.dirname(os.path.abspath(__file__))
-        sch = strict_json(read_text(os.path.join(here, "manifest.schema.json")))
-        if sch.get("$id") != SCHEMA_ID:
-            raise Usage(f"manifest.schema.json next to this script is {sch.get('$id')}, expected {SCHEMA_ID}")
+        sch = strict_json(read_text(os.path.join(here, self.SCHEMA_FILE)))
+        if sch.get("$id") != self.SCHEMA_ID:
+            raise Usage(f"{self.SCHEMA_FILE} next to this script is {sch.get('$id')}, expected {self.SCHEMA_ID}")
         try:
             self.m = strict_json(read_text(os.path.join(self.d, "manifest.json")))
         except (ValueError, UnicodeDecodeError) as e:
@@ -346,15 +352,17 @@ class Verifier:
         validate(self.m, sch, sch, "manifest", errs)
         for e in errs:
             self.check("schema", False, e)
-        return self.check("schema", not errs, f"manifest valid against {SCHEMA_ID}")
+        return self.check("schema", not errs, f"manifest valid against {self.SCHEMA_ID}")
 
-    def semantics(self):
+    def provenance(self):
+        """workflow, source and base checks, shared by every target. Returns (flat, groups, tags)
+        of the trusted source identity, or None when the manifest is not CI provenance."""
         a, m, d = self.a, self.m, self.d
         commit = a.expected_commit
         wf = m["workflow"]
         if not self.check("workflow", "local_build" not in wf,
                           "manifest is from a CI run (local_build is not public CI provenance)"):
-            return
+            return None
         for key, want in (("repository", a.repository), ("ref", a.ref), ("workflow_ref", a.workflow_ref),
                           ("run_id", a.run_id), ("run_attempt", a.run_attempt), ("server_url", a.server_url),
                           ("job", a.producer_job), ("event_name", "push"), ("sha", commit), ("workflow_sha", commit)):
@@ -390,6 +398,15 @@ class Verifier:
         self.eq("base", "own_commit_signer_primary_fingerprint (pinned)", m["own_commit_signer_primary_fingerprint"],
                 a.maintainer_fingerprint)
         self.eq("base", "trusted identity maintainer_primary (pinned)", flat["maintainer_primary"], a.maintainer_fingerprint)
+        return flat, groups, tags
+
+    def semantics(self):
+        a, m, d = self.a, self.m, self.d
+        commit = a.expected_commit
+        prov = self.provenance()
+        if prov is None:
+            return
+        flat, groups, tags = prov
 
         art = m["artifact"]
         ev_text = read_text(os.path.join(d, "expected-version.txt"))
