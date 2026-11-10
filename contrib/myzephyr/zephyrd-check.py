@@ -27,6 +27,9 @@ CTRL_BREAK_EVENT to the child, which is started in its own process group
 (CREATE_NEW_PROCESS_GROUP) and handled by zephyrd like Ctrl+C (src/common/util.h).
 If the child does not exit within --stop-timeout it is killed, and that is a failed
 cleanup on every platform. The listener check connects to each port on 127.0.0.1.
+Every address is the literal 127.0.0.1 (no name lookup), and RPC requests use an
+opener without proxies: urllib's default opener would take proxies from the
+environment, the macOS system settings or the Windows registry.
 All waits are bounded by monotonic deadlines. Exit status: 0 pass, 1 check failed,
 2 usage or precondition error (nothing started), 3 the child had to be killed or a
 listener stayed open.
@@ -55,6 +58,8 @@ HANDSHAKE_STATES = {"synchronizing", "standby", "normal", "idle"}
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-(release|[0-9a-f]{9})$")
 # failed requests: refused/reset connections, timeouts, HTTP errors, non-JSON bodies
 REQUEST_ERRORS = (OSError, urllib.error.URLError, ValueError, http.client.HTTPException)
+# loopback requests never go through a proxy (see the header)
+LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 INFO_FIELDS = ("status", "offline", "height", "target_height", "outgoing_connections_count",
                "incoming_connections_count", "white_peerlist_size", "grey_peerlist_size",
                "synchronized", "version", "nettype", "mainnet")
@@ -154,7 +159,7 @@ def post(port, path, body, timeout):
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with LOOPBACK_OPENER.open(req, timeout=timeout) as r:
         raw = r.read(4 * 1024 * 1024)
     return json.loads(raw)
 

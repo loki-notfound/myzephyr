@@ -11,7 +11,11 @@
 3. Scenario runs with tests/stub-zephyrd.py: expected exit status, an upper bound
    on elapsed time, the child gone afterwards, no listener left on the test ports,
    the recorded checks where they matter, and an unrelated process that holds a
-   test port left running.
+   test port left running; a dead HTTP proxy in the environment does not reach the
+   loopback requests.
+4. platform-selftest.py against a stub that never listens: exit 1, with the stub's
+   console, elapsed time, TCP state and Python version in the output and in the
+   diagnostics file, and no stub left running.
 Exit 0 when every case behaves as expected, 1 otherwise.
 """
 import importlib.util
@@ -198,10 +202,10 @@ def listening(ports):
 
 
 def run(name, mode, scenario, want_exit, max_s, binary=stub, extra=(), log=None, want_checks=None, want_problem=None,
-        held_ports=()):
+        held_ports=(), env_extra=None):
     log = log or os.path.join(work, name.replace(" ", "-"))
     data = log + "-data"
-    env = dict(os.environ, STUB_SCENARIO=scenario)
+    env = dict(os.environ, STUB_SCENARIO=scenario, **(env_extra or {}))
     cmd = [sys.executable, "-I", check_py, mode, "--zephyrd", binary, "--data-dir", data,
            "--log-dir", log, "--expect-version", "2.3.0-release", "--ports", PORTS,
            "--ready-timeout", "8", "--stop-timeout", "3", "--request-timeout", "1", *extra]
@@ -270,6 +274,46 @@ holder.wait(timeout=10)
 
 os.makedirs(os.path.join(work, "pre-existing"))
 run("existing log dir refused", "offline", "good", 2, 5, log=os.path.join(work, "pre-existing"))
+
+# nothing listens on port 9 of 127.0.0.1: a request sent to this proxy would fail
+DEAD_PROXY = {k: "http://127.0.0.1:9" for k in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY")}
+DEAD_PROXY.update({k: "" for k in ("no_proxy", "NO_PROXY")})
+run("good stub offline passes with a dead proxy in the environment", "offline", "good", 0, 20,
+    log=os.path.join(work, "dead-proxy"), env_extra=DEAD_PROXY)
+
+# 4. the platform self-test's diagnostics when a stub never becomes ready
+never = os.path.join(work, "never-listening-stub.py")
+with open(never, "w") as f:
+    f.write("import os, runpy, sys\nos.environ['STUB_SCENARIO'] = 'never-listen'\n"
+            f"sys.argv[0] = {stub!r}\nrunpy.run_path({stub!r}, run_name='__main__')\n")
+pwork = os.path.join(work, "platform-never-ready")
+t = time.monotonic()
+p = subprocess.run([sys.executable, "-I", os.path.join(here, "platform-selftest.py"), "--stub", never,
+                    "--ready-window", "2", pwork], capture_output=True, text=True, timeout=120)
+el = time.monotonic() - t
+out = p.stdout
+diag_file = os.path.join(pwork, "cooperating-stub-ready.diagnostics.json")
+diag = json.load(open(diag_file)) if os.path.exists(diag_file) else {}
+pids = []
+for name in os.listdir(pwork) if os.path.isdir(pwork) else []:
+    if name.endswith(".console"):
+        for line in open(os.path.join(pwork, name)):
+            if " pid " in line:
+                pids.append(int(line.split(" pid ")[1].split()[0]))
+left = [x for x in pids if alive(x)]
+record("platform self-test with a never-listening stub fails", p.returncode == 1 and "FAIL cooperating stub ready" in out,
+       f"exit {p.returncode} (want 1), {el:.1f}s")
+want_out = ["---- diagnostics: cooperating stub ready", "port_accepts_tcp: False", "child: running",
+            "python: CPython", "elapsed_s: ", "never listening", "last_request_error: URLError"]
+missing = [w for w in want_out if w not in out]
+record("never-ready diagnostics in the output: console, elapsed time, TCP state, Python version", not missing,
+       f"missing {missing}" if missing else "all present")
+diag_ok = (diag.get("port_accepts_tcp") is False and diag.get("child") == "running"
+           and (diag.get("elapsed_s") or 0) >= 2 and "never listening" in (diag.get("console") or "")
+           and str(diag.get("python", "")).startswith("CPython"))
+record("never-ready diagnostics in the work directory (diagnostics file)", diag_ok, f"{diag_file}: {sorted(diag)}")
+record("no stub left running after the failed platform self-test", len(pids) >= 4 and not left,
+       f"stub pids {pids}, still alive {left}")
 
 with open(os.path.join(work, "selftest-result.json"), "w") as f:
     json.dump({"failures": failures, "cases": results}, f, indent=2)

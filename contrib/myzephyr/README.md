@@ -23,7 +23,11 @@ checkout. That commit must be the signed zephyr-backports base tag plus own comm
   recorded commits; the checkout must be clean.
 
 Both fingerprints are pinned in the workflow; the key files in `keys/` hold the
-public keys only and must contain exactly the pinned primary key.
+public keys only and must contain exactly the pinned primary key. Signatures are
+checked by calling gpg directly, with the same binary and a temporary keyring for
+import and verification, on the payload and signature split from each object exactly
+as git splits them (`split-signed.sh`); git's own gpg call is not used, so the check
+is the same under Git Bash on Windows as on Linux and macOS.
 
 The version the binary reports follows from the commit, as in
 `cmake/GitVersion.cmake`: `<version>-release` when a tag points at the commit,
@@ -44,12 +48,13 @@ expected string the same way and compares it with `zephyrd --version`.
 | `make-cross-manifest.py`, `manifest-cross.schema.json` | build manifest of a cross build (`myzephyr/daemon-cross-build-manifest/1`); the target fixes the format and binary name |
 | `verify-cross-artifact.py` | checks a downloaded cross artifact like `verify-artifact.py` does (whose workflow, source and base checks it reuses), with the verifier's own static and embedded reports |
 | `unit-test-summary.py` | judges a unit-test run: every enabled test executed, no failure or skip, reference count (a different count is "review-required", not a pass) |
-| `verify-source.sh` | the source checks above |
+| `verify-source.sh`, `split-signed.sh` | the source checks above; `split-signed.sh` takes the signed payload and the signature from a tag or commit object as git 2.56 does, and refuses objects git would not hand to gpg |
 | `check-elf.sh` | runtime requirements of the Linux x86_64 binary, or with `--arch aarch64` of the Linux AArch64 one (machine, interpreter): no RPATH/RUNPATH, glibc symbol versions at most 2.29, no shared C++ runtime |
 | `make-manifest.py`, `manifest.schema.json` | build manifest: source commit and tags, signed base, workflow run, recipe, builder, packages, ELF requirements, artifact hash |
 | `verify-artifact.py` | checks a downloaded release artifact against trusted inputs (see below) |
 | `zephyrd-check.py` | bounded offline-start and default-discovery checks with strict RPC assertions on every sample |
-| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made) |
+| `runtime/Dockerfile` | runtime-only Debian 11 arm64 userland (the arm64 manifest of the Linux builder base's index, python3 from the same snapshot) for a second offline start of the AArch64 binary |
+| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made) |
 | `keys/zephyr-backports-release.asc` | public key that signs the zephyr-backports tags |
 | `keys/myzephyr-maintainer.asc` | public key that signs the own commits |
 
@@ -158,10 +163,11 @@ daemon, started in its own process group, which zephyrd handles like Ctrl+C; on 
 macOS it is SIGTERM. A daemon that has to be killed is a failed cleanup everywhere.
 
 These runners prove a start on those images only (Ubuntu 24.04 on AArch64, macOS 15 on
-Intel, Windows Server 2022). Older AArch64 distributions (glibc 2.29 to 2.38), macOS
-10.13 to 14, Apple Silicon (Rosetta) and Windows 10 are not covered by them. Unlike
-Linux x86_64, the AArch64 binary gets no second offline start in the Debian 11 builder
-userland: that image's base is pinned to an amd64-only digest.
+Intel, Windows Server 2022). On the AArch64 runner the binary also gets a strict offline
+start in a runtime-only Debian 11 arm64 userland (glibc 2.31, `runtime/Dockerfile`), as
+the x86_64 binary does in the Debian 11 builder userland; the job records that image's
+glibc version. Other AArch64 distributions, macOS 10.13 to 14, Apple Silicon (Rosetta)
+and Windows 10 are not covered.
 
 Linux AArch64 compiler header: the snapshot's GCC 9.3 cross compiler
 (`libgcc-9-dev-arm64-cross` 9.3.0-22cross1) ships an `arm_acle.h` whose `extern "C"`

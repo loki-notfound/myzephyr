@@ -27,11 +27,22 @@ ready mainnet answer at height 1):
                   outgoing peer from the start; after 3 s a misleading height of
                   501 inside a BUSY answer / beside a JSON-RPC error object / in the
                   JSON body of an HTTP 500 answer
+
+A scenario that never becomes ready (for the self-tests' diagnostics):
+  never-listen    bind the port and never listen; exit 0 on the stop request
+
+The listener only binds and listens: http.server.HTTPServer.server_bind would also
+call socket.getfqdn() on the address, a reverse name lookup between bind and listen
+(CPython 3.14.7 Lib/http/server.py), so a slow resolver kept the port refusing
+connections. The stub writes its Python version and the times of bind and listen to
+its console (stdout).
 """
 import http.server
 import json
 import os
 import signal
+import socket
+import socketserver
 import sys
 import time
 
@@ -40,6 +51,13 @@ args = sys.argv[1:]
 port = int(args[args.index("--rpc-bind-port") + 1])
 offline = "--offline" in args
 t_start = time.monotonic()
+
+
+def say(text):
+    print(f"stub: {text} at {time.monotonic() - t_start:.3f} s", flush=True)
+
+
+say(f"python {sys.version.split()[0]} pid {os.getpid()} scenario {scenario} port {port}")
 SWITCH = 3.0  # leaves room for the harness to see one valid sample with the peer first
 PEER_EARLY = ("busy-then-sync", "later-testnet", "later-wrong-version", "later-offline",
               "later-failed", "later-busy-height", "later-rpc-error-height", "later-http-error-height")
@@ -133,15 +151,36 @@ class H(http.server.BaseHTTPRequestHandler):
         pass
 
 
-srv = http.server.HTTPServer(("127.0.0.1", port), H)
+class LoopbackServer(http.server.HTTPServer):
+    def server_bind(self):
+        # bind only; no socket.getfqdn() (see the header)
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+        say(f"bound {self.server_name}:{self.server_port}")
+
+
+if scenario == "never-listen":
+    held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    held.bind(("127.0.0.1", port))
+    say("bound, never listening (scenario never-listen)")
+    srv = held
+else:
+    srv = LoopbackServer(("127.0.0.1", port), H)
+    say("listening")
 
 
 def on_term(signum, frame):
-    srv.server_close()
+    if scenario == "never-listen":
+        srv.close()
+    else:
+        srv.server_close()
     sys.exit(1 if scenario == "bad-exit" else 0)
 
 
 signal.signal(signal.SIGTERM, signal.SIG_IGN if scenario == "ignore-term" else on_term)
 if os.name == "nt":  # zephyrd-check stops a Windows child with CTRL_BREAK_EVENT (SIGBREAK here)
     signal.signal(signal.SIGBREAK, signal.SIG_IGN if scenario == "ignore-term" else on_term)
+if scenario == "never-listen":
+    while True:
+        time.sleep(0.2)
 srv.serve_forever()

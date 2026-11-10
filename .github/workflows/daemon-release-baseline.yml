@@ -13,7 +13,7 @@
 # Gates, each its own job, none skipped or allowed to fail silently:
 #   tooling-selftest  self-tests of the start-check harness, the unit-test judge, the
 #                     unit-test preflight, the artifact verifier, the platform start
-#                     mechanics and the cross-target checks
+#                     mechanics, the cross-target checks and the source verification
 #   release-build     portable Release build, ELF/runtime-requirement checks, manifest
 #   unit-tests        separate TESTS=1 (Debug) depends build in the builder image; the same
 #                     unit_tests binary then runs natively on the runner (inventory, XML,
@@ -27,7 +27,8 @@
 #   native-runtime    each cross artifact on a hosted runner of its platform
 #                     (ubuntu-24.04-arm, macos-15-intel, windows-2022): own source
 #                     verification and static checks, verify-cross-artifact.py, the platform
-#                     self-test, --version, strict offline start, default discovery
+#                     self-test, --version, strict offline start (for AArch64 also in a
+#                     runtime-only Debian 11 arm64 userland), default discovery
 # Logs and artifacts are uploaded even when a gate fails; artifact names carry the
 # commit. The jobs that download the release artifact verify it before use, each on its
 # own: verify-source.sh on their own checkout (signatures, history, identity),
@@ -90,6 +91,12 @@ jobs:
       - name: Platform self-test of the start checks (stub child, Linux stop mechanism)
         if: always()
         run: python3 -I tooling/contrib/myzephyr/tests/platform-selftest.py "$RUNNER_TEMP/out/platform"
+      - name: Source verification self-test (repository and keys made by the test; split equal to git's)
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          bash tooling/contrib/myzephyr/tests/verify-source-selftest.sh "$RUNNER_TEMP/verify-source" \
+            | tee "$RUNNER_TEMP/out/verify-source-selftest.txt"
       - name: Cross-target checks self-test (synthetic binaries from measured metadata, one change per case)
         if: always()
         run: python3 -I tooling/contrib/myzephyr/tests/cross-selftest.py "$RUNNER_TEMP/out/cross"
@@ -460,9 +467,9 @@ jobs:
       EXE: ${{ matrix.exe }}
       PY: ${{ matrix.py }}
     # Paths below are relative to the workspace on every OS; no step uses mapfile
-    # (macOS /bin/bash is 3.2). The Linux AArch64 leg has no second offline start in a
-    # Debian 11 container: the builder image's base is pinned to an amd64-only digest, so
-    # runtime-offline's mechanism does not carry over to this runner (not covered).
+    # (macOS /bin/bash is 3.2). The Linux AArch64 leg has a second strict offline start
+    # in a runtime-only Debian 11 arm64 userland (contrib/myzephyr/runtime, the arm64
+    # manifest of the builder base's index), by runtime-offline's container mechanism.
     steps:
       - name: Keep the checkout byte-identical on Windows (no CRLF conversion; long submodule paths)
         if: runner.os == 'Windows'
@@ -486,7 +493,15 @@ jobs:
             uname -a
             echo "bash=$BASH_VERSION"
             git --version
-            gpg --version | head -n 1
+            echo "git binary: $(command -v git)"
+            echo "git gpg.program: $(git config --show-origin --get-all gpg.program || echo '(unset; verify-source.sh calls gpg itself)')"
+            gpg --version | sed -n '1p;/^Home:/p'
+            echo "gpg binary: $(command -v gpg)"
+            echo "every gpg on PATH:"; type -a gpg
+            t=$(mktemp -d)
+            echo "temporary directory: $t"
+            if command -v cygpath > /dev/null; then echo "native form: $(cygpath -m "$t") (cygpath -m), $(cygpath -w "$t") (cygpath -w)"; fi
+            rmdir "$t"
             "$PY" --version
             if [ "$TARGET" = aarch64-linux-gnu ]; then
               readelf --version | head -n 1; objdump --version | head -n 1; file --version | head -n 1
@@ -546,6 +561,22 @@ jobs:
         run: |
           "$PY" -I tooling/contrib/myzephyr/zephyrd-check.py offline --zephyrd "art/$EXE" \
             --data-dir data-offline --log-dir out/offline --expect-version "$(tr -d '\r\n' < art/expected-version.txt)"
+      - name: Strict offline start in a runtime-only Debian 11 arm64 userland (glibc 2.31)
+        if: matrix.target == 'aarch64-linux-gnu'
+        run: |
+          docker build -t myzephyr-runtime-arm64:local -f tooling/contrib/myzephyr/runtime/Dockerfile tooling/contrib/myzephyr/runtime
+          docker run --rm --network=none --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD/art:/art:ro" -v "$PWD/tooling/contrib/myzephyr:/harness:ro" -v "$PWD/out:/out" \
+            myzephyr-runtime-arm64:local sh -c '
+              set -e
+              ldd --version | head -n 1 > /out/debian-11-arm64-userland.txt
+              { echo "debian_version $(cat /etc/debian_version)"; echo "architecture $(dpkg --print-architecture)"
+                echo "python3 $(python3 --version)"; } >> /out/debian-11-arm64-userland.txt
+              cp /runtime-apt-state.txt /runtime-packages.tsv /out/
+              cat /out/debian-11-arm64-userland.txt
+              head -n 1 /out/debian-11-arm64-userland.txt | grep -q " 2\.31$"
+              python3 -I /harness/zephyrd-check.py offline --zephyrd /art/zephyrd --data-dir /tmp/data-offline \
+                --log-dir /out/offline-debian-11-arm64 --expect-version "$(tr -d "\r\n" < /art/expected-version.txt)"'
       - name: Default discovery from an empty directory (no peer options)
         run: |
           "$PY" -I tooling/contrib/myzephyr/zephyrd-check.py discovery --zephyrd "art/$EXE" \

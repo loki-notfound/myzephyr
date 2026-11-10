@@ -29,10 +29,28 @@
 #            checkout, including submodules and ignored files, is clean.
 #
 # Keys: each key file is imported into its own temporary keyring (no trust
-# database, no other keys). It must contain public keys only, with the pinned
-# fingerprint as its only primary key; the fingerprints are passed explicitly and
-# never taken from the file.
-# Writes key=value identities to FILE for the build manifest.
+# database, no other keys). It must contain public keys only (gpg's own import
+# count of secret keys read must be zero), with the pinned fingerprint as its only
+# primary key; the fingerprints are passed explicitly and never taken from the file.
+#
+# Signatures: gpg is called directly, never through git's own gpg call. Import,
+# listing and verification use the same gpg binary and pass the keyring as
+# --homedir; nothing depends on GNUPGHOME reaching a gpg that git starts (under Git
+# Bash, git.exe is a native program and the gpg it started found no keyring there,
+# CI run 42782105005). The signed payload and the signature are taken from the
+# object bytes as git 2.56 takes them for a SHA-1 repository: a tag is split at the
+# last line that starts a signature block (gpg-interface.c parse_signed_buffer), a
+# commit loses its "gpgsig" header field, which is the signature, with continuation
+# lines (commit.c parse_buffer_signed_by_header). Objects outside what our objects
+# use are refused, never guessed: a signature that is not OpenPGP, a tag header
+# with a gpgsig field, a commit with more than one or no gpgsig field or with any
+# other gpgsig* field. gpg runs as git runs it (--keyid-format=long --status-fd=1
+# --verify); its exit status must be 0, and the status lines must show exactly one
+# good and valid signature by the pinned primary key and nothing else that git or
+# this script rejects.
+# A missing or unusable gpg is fatal; verification is never skipped.
+# Writes key=value identities to FILE for the build manifest; prints the gpg and git
+# binaries used and the temporary directory (with its native form under Git Bash).
 set -euo pipefail
 export LC_ALL=C
 
@@ -68,22 +86,61 @@ done
 for f in "$base_key" "$maint_key"; do test -r "$f" || { echo "verify-source: key file $f not readable" >&2; exit 2; }; done
 git -C "$co" rev-parse --git-dir > /dev/null 2>&1 || { echo "verify-source: $co is not a git checkout" >&2; exit 2; }
 
-tmp=$(mktemp -d)
+command -v gpg > /dev/null 2>&1 || fail "gpg not found in PATH; signatures cannot be verified"
+gpg_bin=$(command -v gpg)
+gpg_ver=$(gpg --version 2>&1) || fail "gpg ($gpg_bin) does not run: $gpg_ver"
+gpg_ver=${gpg_ver%%$'\n'*}
+[[ "$gpg_ver" == "gpg (GnuPG) "* ]] || fail "$gpg_bin is not GnuPG: $gpg_ver"
+tmp=$(mktemp -d) || fail "cannot create a temporary directory"
 trap 'rm -rf "$tmp"' EXIT
 g() { git -C "$co" "$@"; }
+# split_tag and split_commit (payload and signature from the object bytes, as git splits them)
+lib=$(dirname "${BASH_SOURCE[0]}")/split-signed.sh
+[ -r "$lib" ] || fail "$lib not readable"
+. "$lib"
+native_tmp=$tmp
+if command -v cygpath > /dev/null 2>&1; then native_tmp=$(cygpath -m "$tmp" 2>&1) || native_tmp="cygpath failed: $native_tmp"; fi
+echo "verify-source: gpg $gpg_bin ($gpg_ver); git $(command -v git) ($(git --version)); temporary directory $tmp (native: $native_tmp)"
 
 # keyring <name> <key-file> <fingerprint>: a temporary keyring holding only that file's keys
 keyring() {
-  local home=$tmp/$1 file=$2 fpr=$3 prim
-  mkdir -m 700 "$home"
-  gpg --batch --quiet --homedir "$home" --import "$file" 2> "$home.import.log" \
-    || fail "cannot import $file"
-  [ -z "$(gpg --batch --homedir "$home" --with-colons --list-secret-keys 2> /dev/null)" ] \
-    || fail "$file contains secret key material"
-  prim=$(gpg --batch --homedir "$home" --with-colons --list-keys \
-    | awk -F: '$1=="pub"{want=1; next} want && $1=="fpr"{print $10; want=0}' | sort -u)
+  local home=$tmp/$1 file=$2 fpr=$3 st res prim
+  # Owner-only through the umask, with no chmod afterwards: "mkdir -m 700" changes the
+  # mode after creating the directory, and that call fails under Git Bash on the
+  # Windows runner (CI run 42782105005). Creating the directory must succeed; its mode
+  # is not checked afterwards, because Git Bash does not carry POSIX modes onto NTFS.
+  # The keyring holds public keys only and lies inside the mktemp -d directory.
+  ( umask 077 && mkdir "$home" ) || fail "cannot create the keyring directory $home"
+  st=$(gpg --batch --quiet --homedir "$home" --status-fd=1 --import "$file" 2> "$home.import.log") \
+    || fail "cannot import $file:"$'\n'"$(cat "$home.import.log")"
+  res=$(grep '^\[GNUPG:\] IMPORT_RES ' <<< "$st") || fail "gpg reported no import result for $file"
+  [ "$(wc -l <<< "$res" | tr -d ' ')" = 1 ] || fail "gpg reported more than one import result for $file"
+  # IMPORT_RES fields 10 to 12: secret keys read, imported, unchanged (GnuPG doc/DETAILS)
+  [ "$(awk '{print $12 "," $13 "," $14}' <<< "$res")" = "0,0,0" ] || fail "$file contains secret key material"
+  prim=$(gpg --batch --homedir "$home" --with-colons --list-keys 2> "$home.list.log") \
+    || fail "cannot list the keys imported from $file:"$'\n'"$(cat "$home.list.log")"
+  prim=$(awk -F: '$1=="pub"{want=1; next} want && $1=="fpr"{print $10; want=0}' <<< "$prim" | sort -u)
   [ "$prim" = "$fpr" ] || fail "$file must hold exactly the primary key $fpr; found: $(tr '\n' ' ' <<< "$prim")"
-  echo "$home"
+}
+
+# verify_object <tag|commit> <sha> <keyring> <what>: gpg's status lines in $tmp/v.<sha>/status
+verify_object() {
+  local kind=$1 obj=$2 home=$3 what=$4 d=$tmp/v.$2 rc=0
+  mkdir "$d" || fail "cannot create $d"
+  g cat-file "$kind" "$obj" > "$d/raw" || fail "$what: cannot read the $kind object $obj"
+  "split_$kind" "$d" || rc=$?
+  case $rc in
+    0) ;;
+    1|5) fail "$what: no signature found" ;;
+    2) fail "$what: the signature is not an OpenPGP signature" ;;
+    3) fail "$what: carries a gpgsig header field this verification does not accept" ;;
+    4) fail "$what: no blank line after the header" ;;
+    *) fail "$what: cannot split the signed object (status $rc)" ;;
+  esac
+  gpg --batch --homedir "$home" --keyid-format=long --status-fd=1 --verify "$d/sig" "$d/payload" \
+    > "$d/status" 2> "$d/stderr" || rc=$?
+  [ "$rc" = 0 ] || fail "$what: signature does not verify (gpg exit $rc):"$'\n'"$(cat "$d/status" "$d/stderr")"
+  vstatus=$d/status
 }
 
 # check_sig <status-text> <primary-fingerprint> <what>: prints the signing key fingerprint
@@ -92,15 +149,16 @@ check_sig() {
   if grep -qE '^\[GNUPG:\] (BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG|NO_PUBKEY) ' <<< "$st"; then
     fail "$what: signature not acceptable:"$'\n'"$(grep -E '^\[GNUPG:\] ' <<< "$st")"
   fi
-  grep -q '^\[GNUPG:\] GOODSIG ' <<< "$st" || fail "$what: no good signature"
+  [ "$(grep -c '^\[GNUPG:\] GOODSIG ' <<< "$st")" = 1 ] || fail "$what: expected exactly one good signature"
   [ "$(grep -c '^\[GNUPG:\] VALIDSIG ' <<< "$st")" = 1 ] || fail "$what: expected exactly one valid signature"
   valid=$(grep '^\[GNUPG:\] VALIDSIG ' <<< "$st")
   [ "$(awk '{print $NF}' <<< "$valid")" = "$fpr" ] || fail "$what: signed by primary key $(awk '{print $NF}' <<< "$valid"), expected $fpr"
   awk '{print $3}' <<< "$valid"
 }
 
-base_home=$(keyring base "$base_key" "$base_fpr")
-maint_home=$(keyring maintainer "$maint_key" "$maint_fpr")
+keyring base "$base_key" "$base_fpr"
+keyring maintainer "$maint_key" "$maint_fpr"
+base_home=$tmp/base maint_home=$tmp/maintainer
 
 # base: the signed tag, independent of HEAD
 obj=$(g rev-parse --verify --quiet "$base_ref") || fail "base ref $base_ref not present"
@@ -110,7 +168,8 @@ hdr=$(g cat-file tag "$obj" | sed '/^$/q')
 [ "$(sed -n 's/^object //p' <<< "$hdr")" = "$base_commit" ] || fail "tag object points at $(sed -n 's/^object //p' <<< "$hdr"), expected $base_commit"
 [ "$(sed -n 's/^type //p' <<< "$hdr")" = commit ] || fail "tag object does not point at a commit"
 [ "$(sed -n 's/^tag //p' <<< "$hdr")" = "$base_tag" ] || fail "tag object is named $(sed -n 's/^tag //p' <<< "$hdr"), expected $base_tag"
-st=$(GNUPGHOME=$base_home g verify-tag --raw "$obj" 2>&1) || fail "base tag signature does not verify:"$'\n'"$st"
+verify_object tag "$obj" "$base_home" "base tag $base_tag"
+st=$(cat "$vstatus")
 base_signing_key=$(check_sig "$st" "$base_fpr" "base tag $base_tag")
 
 # head
@@ -130,7 +189,8 @@ for c in "${commits[@]}"; do
   [ "${parents[1]}" = "$prev" ] || fail "$c has parent ${parents[1]}, expected $prev (linear history from the base)"
   origin=$(g log -1 --format='%(trailers:key=Origin,valueonly,separator=%x2C)' "$c")
   [ "$origin" = myzephyr ] || fail "$c: trailer Origin is '${origin}', expected exactly 'myzephyr'"
-  st=$(GNUPGHOME=$maint_home g verify-commit --raw "$c" 2>&1) || fail "$c: signature does not verify:"$'\n'"$st"
+  verify_object commit "$c" "$maint_home" "commit $c"
+  st=$(cat "$vstatus")
   check_sig "$st" "$maint_fpr" "commit $c" > /dev/null
   paths=() kinds=""
   while IFS=$'\t' read -r meta path; do
@@ -154,7 +214,8 @@ while read -r t; do
   [ -n "$t" ] || continue
   tobj=$(g rev-parse "refs/tags/$t")
   [ "$(g cat-file -t "$tobj")" = tag ] || fail "tag $t at HEAD is not an annotated tag"
-  st=$(GNUPGHOME=$maint_home g verify-tag --raw "$tobj" 2>&1) || fail "tag $t at HEAD: signature does not verify:"$'\n'"$st"
+  verify_object tag "$tobj" "$maint_home" "tag $t at HEAD"
+  st=$(cat "$vstatus")
   check_sig "$st" "$maint_fpr" "tag $t" > /dev/null
   tag_lines+=("source_tag $t=$tobj $maint_fpr")
 done < <(g tag -l --points-at HEAD)
@@ -178,6 +239,7 @@ dirty=$(g status --porcelain --ignored --ignore-submodules=none)
   echo "maintainer_primary=$maint_fpr"
   echo "own_commit_count=${#commits[@]}"
   printf '%s\n' "${own_lines[@]}"
-  while read -r sha path _; do [ -n "$path" ] && echo "submodule $path=${sha#[ ]}"; done <<< "$subs"
+  # "|| echo", not "&& echo": with no submodule the loop must not end with status 1 (pipefail)
+  while read -r sha path _; do [ -z "$path" ] || echo "submodule $path=${sha#[ ]}"; done <<< "$subs"
 } | sed '/^$/d' > "$out"
 echo "verify-source: ok (HEAD $head, ${#commits[@]} own commit(s) above $base_tag = $base_commit, tags at HEAD: ${#tag_lines[@]})"
