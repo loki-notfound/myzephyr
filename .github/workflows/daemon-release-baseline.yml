@@ -20,12 +20,12 @@
 #                     environment record with binary hashes and the root filesystem)
 #   runtime-offline   strict offline start on ubuntu-24.04 and in the Debian 11 builder userland
 #   bootstrap         default public peer discovery from an empty directory (no peer options)
-#   cross-build       macOS x86_64 and Windows x86_64 cross builds in the pinned cross
-#                     builder image (contrib/myzephyr/cross), static checks of the binary
-#                     format and embedded strings, manifest (nothing is executed); Linux
-#                     AArch64 is not built yet (see contrib/myzephyr/README.md)
+#   cross-build       Linux AArch64, macOS x86_64 and Windows x86_64 cross builds in the
+#                     pinned cross builder image (contrib/myzephyr/cross; for AArch64 one
+#                     hash-guarded GCC header fix, see its Dockerfile), static checks of the
+#                     binary format and embedded strings, manifest (nothing is executed)
 #   native-runtime    each cross artifact on a hosted runner of its platform
-#                     (macos-15-intel, windows-2022): own source
+#                     (ubuntu-24.04-arm, macos-15-intel, windows-2022): own source
 #                     verification and static checks, verify-cross-artifact.py, the platform
 #                     self-test, --version, strict offline start, default discovery
 # Logs and artifacts are uploaded even when a gate fails; artifact names carry the
@@ -371,7 +371,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64-apple-darwin, x86_64-w64-mingw32]
+        target: [aarch64-linux-gnu, x86_64-apple-darwin, x86_64-w64-mingw32]
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -404,6 +404,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/out"
           case "$TARGET" in
+            aarch64-linux-gnu) bin=zephyrd; src-cross/contrib/myzephyr/check-elf.sh --arch aarch64 "src-cross/build/release-$TARGET/bin/$bin" "$out/static-report.txt" ;;
             x86_64-apple-darwin) bin=zephyrd; python3 -I src-cross/contrib/myzephyr/check-macho.py "src-cross/build/release-$TARGET/bin/$bin" "$out/static-report.txt" ;;
             x86_64-w64-mingw32) bin=zephyrd.exe; python3 -I src-cross/contrib/myzephyr/check-pe.py "src-cross/build/release-$TARGET/bin/$bin" "$out/static-report.txt" ;;
           esac
@@ -442,6 +443,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - target: aarch64-linux-gnu
+            runner: ubuntu-24.04-arm
+            exe: zephyrd
+            py: python3
           - target: x86_64-apple-darwin
             runner: macos-15-intel
             exe: zephyrd
@@ -455,7 +460,9 @@ jobs:
       EXE: ${{ matrix.exe }}
       PY: ${{ matrix.py }}
     # Paths below are relative to the workspace on every OS; no step uses mapfile
-    # (macOS /bin/bash is 3.2).
+    # (macOS /bin/bash is 3.2). The Linux AArch64 leg has no second offline start in a
+    # Debian 11 container: the builder image's base is pinned to an amd64-only digest, so
+    # runtime-offline's mechanism does not carry over to this runner (not covered).
     steps:
       - name: Keep the checkout byte-identical on Windows (no CRLF conversion; long submodule paths)
         if: runner.os == 'Windows'
@@ -481,6 +488,9 @@ jobs:
             git --version
             gpg --version | head -n 1
             "$PY" --version
+            if [ "$TARGET" = aarch64-linux-gnu ]; then
+              readelf --version | head -n 1; objdump --version | head -n 1; file --version | head -n 1
+            fi
           } | tee out/tools.txt
       - name: Download the cross-built artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -505,6 +515,7 @@ jobs:
         run: |
           v=out/artifact-verification
           case "$TARGET" in
+            aarch64-linux-gnu) bash tooling/contrib/myzephyr/check-elf.sh --arch aarch64 "art/$EXE" "$v/static-report.txt" ;;
             x86_64-apple-darwin) "$PY" -I tooling/contrib/myzephyr/check-macho.py "art/$EXE" "$v/static-report.txt" ;;
             x86_64-w64-mingw32) "$PY" -I tooling/contrib/myzephyr/check-pe.py "art/$EXE" "$v/static-report.txt" ;;
           esac

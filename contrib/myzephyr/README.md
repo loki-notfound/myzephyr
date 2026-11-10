@@ -38,18 +38,18 @@ expected string the same way and compares it with `zephyrd --version`.
 | `linux/run-builder.sh` | builds the image and runs the build as a non-root user (Docker or rootless Podman) |
 | `linux/build-in-container.sh` | `contrib/depends` and CMake inside the image; `release` (target `daemon`, `CMAKE_SKIP_RPATH=ON`) or `tests` (`TESTS=1`, Debug, `unit_tests`, `test_notifier`) |
 | `linux/run-unit-tests.sh` | runs the built `unit_tests` natively (`native`, used by CI) or in the image (`docker`/`podman`, diagnosis); records the environment (root filesystem device and the sysfs rotational attributes, binary hashes, interpreter and libraries), the test inventory, log and XML report; a missing prerequisite stops before any test is listed or run |
-| `cross/Dockerfile`, `cross/run-builder.sh`, `cross/build-in-container.sh` | cross builders from the same base image digest and snapshot as `linux/`: macOS x86_64 (`x86_64-apple-darwin`, depends' hash-pinned clang 9.0.0 and Xcode 12.2 SDK) and Windows x86_64 (`x86_64-w64-mingw32`, MinGW-w64 with the posix thread model); target `daemon`, Release. The `aarch64-linux-gnu` option exists to reproduce the known build failure only (see "Other platforms") |
+| `cross/Dockerfile`, `cross/run-builder.sh`, `cross/build-in-container.sh` | cross builders from the same base image digest and snapshot as `linux/`: Linux AArch64 (`aarch64-linux-gnu`, the snapshot's GCC 9.3 cross compiler with one hash-guarded header fix, see "Other platforms"), macOS x86_64 (`x86_64-apple-darwin`, depends' hash-pinned clang 9.0.0 and Xcode 12.2 SDK) and Windows x86_64 (`x86_64-w64-mingw32`, MinGW-w64 with the posix thread model); target `daemon`, Release |
 | `check-macho.py`, `check-pe.py` | static checks of the macOS Mach-O and the Windows PE binary with fixed expectations (architecture, minimum OS, subsystem, linked libraries); pure Python, nothing is executed |
-| `check-embedded.py` | the expected version string and the three mainnet seeds are embedded (used where the binary cannot run on the build machine) |
+| `check-embedded.py` | the expected version string and the four mainnet IP seeds are embedded (used where the binary cannot run on the build machine) |
 | `make-cross-manifest.py`, `manifest-cross.schema.json` | build manifest of a cross build (`myzephyr/daemon-cross-build-manifest/1`); the target fixes the format and binary name |
 | `verify-cross-artifact.py` | checks a downloaded cross artifact like `verify-artifact.py` does (whose workflow, source and base checks it reuses), with the verifier's own static and embedded reports |
 | `unit-test-summary.py` | judges a unit-test run: every enabled test executed, no failure or skip, reference count (a different count is "review-required", not a pass) |
 | `verify-source.sh` | the source checks above |
-| `check-elf.sh` | runtime requirements: no RPATH/RUNPATH, glibc symbol versions at most 2.29, no shared C++ runtime |
+| `check-elf.sh` | runtime requirements of the Linux x86_64 binary, or with `--arch aarch64` of the Linux AArch64 one (machine, interpreter): no RPATH/RUNPATH, glibc symbol versions at most 2.29, no shared C++ runtime |
 | `make-manifest.py`, `manifest.schema.json` | build manifest: source commit and tags, signed base, workflow run, recipe, builder, packages, ELF requirements, artifact hash |
 | `verify-artifact.py` | checks a downloaded release artifact against trusted inputs (see below) |
 | `zephyrd-check.py` | bounded offline-start and default-discovery checks with strict RPC assertions on every sample |
-| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic Mach-O and PE files are made) |
+| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made) |
 | `keys/zephyr-backports-release.asc` | public key that signs the zephyr-backports tags |
 | `keys/myzephyr-maintainer.asc` | public key that signs the own commits |
 
@@ -139,26 +139,36 @@ test gates. Other branches and pull requests keep their existing triggers.
 ## Other platforms
 
 Upstream v2.3.0 ships daemons for Linux x86_64, Linux AArch64, macOS x86_64 (minimum
-10.13) and Windows x86_64. The workflow builds macOS x86_64 and Windows x86_64 with
-`contrib/depends` in the cross builder (`cross-build`) and inspects them statically:
-a thin x86_64 Mach-O with minimum macOS 10.13.0 that links only OS frameworks and
-libc++/libSystem, and a PE32+ x86-64 console executable that imports only Windows system
-DLLs (no MinGW runtime DLL). The binary is not executed on the build machine: the
+10.13) and Windows x86_64. The workflow builds Linux AArch64, macOS x86_64 and Windows
+x86_64 with `contrib/depends` in the cross builder (`cross-build`) and inspects them
+statically: an AArch64 ELF position-independent executable with the interpreter
+`/lib/ld-linux-aarch64.so.1`, upstream's NEEDED set, glibc symbol versions at most 2.29
+and no RPATH/RUNPATH or shared C++ runtime (`check-elf.sh --arch aarch64`); a thin x86_64
+Mach-O with minimum macOS 10.13.0 that links only OS frameworks and libc++/libSystem; and
+a PE32+ x86-64 console executable that imports only Windows system DLLs (no MinGW
+runtime DLL). The binary is not executed on the build machine: the
 expected version and the mainnet seeds are checked as embedded strings, and the manifest
 carries no version output.
 
 `native-runtime` then takes each artifact to a hosted runner of its platform
-(`macos-15-intel`, `windows-2022`), verifies the source and the artifact itself like the
+(`ubuntu-24.04-arm`, `macos-15-intel`, `windows-2022`), verifies the source and the artifact itself like the
 Linux consumer jobs, runs `--version`, the strict offline start and the default discovery
 with `zephyrd-check.py`. On Windows the clean-stop request is `CTRL_BREAK_EVENT` to the
 daemon, started in its own process group, which zephyrd handles like Ctrl+C; on Linux and
 macOS it is SIGTERM. A daemon that has to be killed is a failed cleanup everywhere.
 
-These runners prove a start on those images only (macOS 15 on Intel, Windows Server
-2022). macOS 10.13 to 14, Apple Silicon (Rosetta), Windows 10 and older ARM64
-distributions are not covered by them.
+These runners prove a start on those images only (Ubuntu 24.04 on AArch64, macOS 15 on
+Intel, Windows Server 2022). Older AArch64 distributions (glibc 2.29 to 2.38), macOS
+10.13 to 14, Apple Silicon (Rosetta) and Windows 10 are not covered by them. Unlike
+Linux x86_64, the AArch64 binary gets no second offline start in the Debian 11 builder
+userland: that image's base is pinned to an amd64-only digest.
 
-Linux AArch64 is not built yet: the snapshot's GCC 9.3 cross compiler ships an
-`arm_acle.h` whose `extern "C"` block is opened twice and closed once, and RandomX does
-not compile with it. A newer cross compiler would raise the glibc requirement above
-upstream's 2.29; the fix is pending review.
+Linux AArch64 compiler header: the snapshot's GCC 9.3 cross compiler
+(`libgcc-9-dev-arm64-cross` 9.3.0-22cross1) ships an `arm_acle.h` whose `extern "C"`
+block is opened twice and closed once, so RandomX does not compile with it. This is GCC
+PR target/100985, fixed on the gcc-9 branch by commit
+`8c92fcb13a4979232787f0476bf7469ccbb03617` (first released in GCC 9.5.0). The cross
+builder applies exactly that change to the packaged header, checking the file's SHA256
+before (the packaged file) and after (the fixed gcc-9 file); any other input fails the
+image build, and `builder-apt-state.txt`, hence the manifest, records it. A newer cross
+compiler would raise the glibc requirement above upstream's 2.29.

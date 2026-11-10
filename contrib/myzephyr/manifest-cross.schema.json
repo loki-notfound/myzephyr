@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "myzephyr/daemon-cross-build-manifest/1",
-  "title": "myzephyr cross-built zephyrd: macOS x86_64, Windows x86_64",
+  "title": "myzephyr cross-built zephyrd: Linux AArch64, macOS x86_64, Windows x86_64",
   "description": "Written by make-cross-manifest.py, checked by verify-cross-artifact.py. The binary cannot run on the build machine: the version is checked as an embedded string and by the native runtime job, never by executing it here.",
   "type": "object",
   "required": [
@@ -53,12 +53,26 @@
         },
         "format": {
           "enum": [
+            "elf",
             "macho",
             "pe"
           ]
         }
       },
       "oneOf": [
+        {
+          "properties": {
+            "target": {
+              "const": "aarch64-linux-gnu"
+            },
+            "format": {
+              "const": "elf"
+            },
+            "name": {
+              "const": "zephyrd"
+            }
+          }
+        },
         {
           "properties": {
             "target": {
@@ -397,6 +411,7 @@
       "properties": {
         "format": {
           "enum": [
+            "elf",
             "macho",
             "pe"
           ]
@@ -432,8 +447,8 @@
         },
         "seeds": {
           "type": "array",
-          "minItems": 3,
-          "maxItems": 3,
+          "minItems": 4,
+          "maxItems": 4,
           "items": {
             "type": "string"
           }
@@ -490,6 +505,7 @@
     },
     "cross_target": {
       "enum": [
+        "aarch64-linux-gnu",
         "x86_64-apple-darwin",
         "x86_64-w64-mingw32"
       ]

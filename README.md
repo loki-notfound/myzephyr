@@ -10,6 +10,8 @@ Own commits above the base:
 - The official public node `remote-node.zephyrprotocol.com` is added to the mainnet
   DNS seeds, and its address `24.199.101.125:17766` to the mainnet fallback seeds. The
   compiled-in seeds no longer accepted connections, so a new node found no peer.
+- A second fallback node, `85.215.93.176:17766`, is added to the mainnet fallback
+  seeds. The maintainer vouches for it as a reliable fallback.
 - Build and test tooling: `contrib/myzephyr/` and
   `.github/workflows/daemon-release-baseline.yml`.
 - The GoogleTest recipe of `contrib/depends` (used only for unit-test builds) uses the

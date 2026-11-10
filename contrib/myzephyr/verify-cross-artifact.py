@@ -8,9 +8,10 @@
       --base-fingerprint FPR --maintainer-fingerprint FPR
       --source-identity FILE --static-report FILE --embedded-report FILE --recipe-dir DIR [--report FILE]
 
-T: x86_64-apple-darwin or x86_64-w64-mingw32. The same rule as
+T: aarch64-linux-gnu, x86_64-apple-darwin or x86_64-w64-mingw32. The same rule as
 verify-artifact.py: every value after --artifact comes from the verifier. --static-report is
-the verifier's own check-macho.py / check-pe.py report of the downloaded binary, --embedded-report its own check-embedded.py report, --recipe-dir
+the verifier's own check-elf.sh --arch aarch64 / check-macho.py / check-pe.py report of the
+downloaded binary, --embedded-report its own check-embedded.py report, --recipe-dir
 contrib/myzephyr/cross of its own checkout. The workflow, source and base checks are
 verify-artifact.py's own code (imported). Target-specific checks:
   files     SHA256SUMS lists exactly the binary (zephyrd or zephyrd.exe), manifest.json,
@@ -20,7 +21,8 @@ verify-artifact.py's own code (imported). Target-specific checks:
   version   expected version as in verify-artifact.py; the binary embeds exactly it;
   binary    name, target and format of T, actual size and hash;
   static    the verifier's report passed and describes this binary; the manifest and the
-            artifact's static-report.txt equal it; the fixed values of T hold in it;
+            artifact's static-report.txt equal it (except elf_file: file(1) wording depends
+            on the host); the fixed values of T hold in it;
   embedded  the verifier's embedded report passed; the artifact's report and the manifest equal it;
   build     recipe, base image, snapshot, builder target and build-logs records as in
             verify-artifact.py, for the cross builder;
@@ -42,16 +44,23 @@ spec = importlib.util.spec_from_file_location("verify_artifact", os.path.join(he
 va = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(va)
 
-TARGETS = {"x86_64-apple-darwin": ("macho", "zephyrd"), "x86_64-w64-mingw32": ("pe", "zephyrd.exe")}
-SEEDS = ["142.93.255.216:17766", "142.93.98.116:17766", "24.199.101.125:17766"]
+TARGETS = {"aarch64-linux-gnu": ("elf", "zephyrd"), "x86_64-apple-darwin": ("macho", "zephyrd"),
+           "x86_64-w64-mingw32": ("pe", "zephyrd.exe")}
+SEEDS = ["142.93.255.216:17766", "142.93.98.116:17766", "24.199.101.125:17766", "85.215.93.176:17766"]
 # fixed values each target's own static report must show (the checkers fail otherwise too)
 FIXED = {
+    "elf": {"elf_interpreter": "/lib/ld-linux-aarch64.so.1", "elf_rpath_runpath": "none",
+            "elf_needed": "ld-linux-aarch64.so.1 libc.so.6 libm.so.6 libpthread.so.0",
+            "elf_max_glibc_allowed": "GLIBC_2.29", "elf_cxx_version_needs": "none"},
     "macho": {"macho_cputype": "0x1000007", "macho_filetype": "2", "macho_rpath": "none",
               "macho_dylinker": "/usr/lib/dyld"},
     "pe": {"pe_magic": "0x20b", "pe_machine": "0x8664", "pe_subsystem": "3"},
 }
-REPORT_KEYS = {"macho": ("macho_sha256", "macho_size", "macho_checks"), "pe": ("pe_sha256", "pe_size", "pe_checks")}
-HOST_DEPENDENT = set()   # every report value is host-independent (pure-Python readers)
+REPORT_KEYS = {"elf": ("elf_sha256", "elf_size", "elf_checks"), "macho": ("macho_sha256", "macho_size", "macho_checks"),
+               "pe": ("pe_sha256", "pe_size", "pe_checks")}
+# report values whose wording depends on the host's tools; Mach-O and PE reports come from
+# pure-Python readers and have none
+HOST_DEPENDENT = {"elf": {"elf_file"}, "macho": set(), "pe": set()}
 
 
 class CrossVerifier(va.Verifier):
@@ -101,7 +110,7 @@ class CrossVerifier(va.Verifier):
         self.eq("static", "static_report.format", sr["format"], self.fmt)
         self.eq("static", "static_report.checks", sr["checks"], "passed")
         for key in sorted(set(mine) | set(theirs) | set(sr["values"])):
-            if key in HOST_DEPENDENT:
+            if key in HOST_DEPENDENT[self.fmt]:
                 continue
             self.eq("static", f"artifact static-report.txt {key} (trusted report)", theirs.get(key), mine.get(key))
             self.eq("static", f"static_report.values.{key} (trusted report)", sr["values"].get(key), mine.get(key))

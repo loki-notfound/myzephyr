@@ -7,7 +7,7 @@ Fails (exit 1) unless the binary contains, as NUL-terminated byte strings:
   - the expected version "<number>-release" or "<number>-<sha9>" (what --version prints
     inside "(v...)"), and no other "2.3.0-<suffix>" version string of that form;
   - each mainnet seed of src/p2p/net_node.inl: 142.93.255.216:17766, 142.93.98.116:17766,
-    24.199.101.125:17766.
+    24.199.101.125:17766, 85.215.93.176:17766.
 Used where the binary cannot be executed on the build machine (cross builds); the native
 runtime job then checks --version by running it.
 """
@@ -15,7 +15,7 @@ import hashlib
 import re
 import sys
 
-SEEDS = ("142.93.255.216:17766", "142.93.98.116:17766", "24.199.101.125:17766")
+SEEDS = ("142.93.255.216:17766", "142.93.98.116:17766", "24.199.101.125:17766", "85.215.93.176:17766")
 VERSION_RE = re.compile(rb"(?<![0-9A-Za-z.])(\d+\.\d+\.\d+-(?:release|[0-9a-f]{9}))\0")
 
 
