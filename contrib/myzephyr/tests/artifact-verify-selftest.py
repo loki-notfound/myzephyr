@@ -435,7 +435,11 @@ NEGATIVE = [
         "workflow.pull_request"), True),
 ]
 
-# rows my/<name> and pull_request: (variant, name, mutation, seal)
+# cases that assume a push row; skipped when a real artifact comes from a pull-request run
+PUSH_ONLY = {"table-trusted-event-pull-request", "table-trusted-github-sha-not-built", "table-trusted-pr-on-push",
+             "table-manifest-event-pull-request", "table-manifest-pr-on-push"}
+
+# rows my/<name> and pull_request: (variant, name, mutation, seal); in real mode only the row of the run
 VARIANT_NEGATIVE = [
     ("my", "my-trusted-ref-no-name", trusted("ref", "refs/heads/my", "trusted run identity not in the table"), False),
     ("my", "my-trusted-ref-mine", trusted("ref", "refs/heads/mine/v2.3.0", "trusted run identity not in the table"), False),
@@ -446,12 +450,12 @@ VARIANT_NEGATIVE = [
     ("pr", "pr-trusted-head-under-my", trusted_pr("head_ref", "my/v2.3.0-candidate", "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-head-ci-branch", trusted_pr("head_ref", "ci/daemon-release-baseline", "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-number-mismatch", trusted_pr("number", 8, "trusted run identity not in the table"), False),
-    ("pr", "pr-trusted-merge-is-built", trusted("github-sha", "e66283f3812e8ebac7911ea55146267effc24150", "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-merge-is-built", lambda d, t: (t.__setitem__("github-sha", t["expected-commit"]), "trusted run identity not in the table")[1], False),
     ("pr", "pr-trusted-ref-pull-head", trusted("ref", "refs/pull/7/head", "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-no-pr-fields", trusted("pull-request", "none", "trusted run identity not in the table"), False),
     ("pr", "pr-manifest-number", manifest_pr("number", 8, "workflow.pull_request"), True),
     ("pr", "pr-manifest-head", manifest_pr("head_sha", OTHER, "workflow.pull_request"), True),
-    ("pr", "pr-manifest-sha-is-built", m_set(["workflow", "sha"], "e66283f3812e8ebac7911ea55146267effc24150", "workflow.sha"), True),
+    ("pr", "pr-manifest-sha-is-built", manifest_case(lambda m, t: (m["workflow"].__setitem__("sha", t["expected-commit"]), "workflow.sha")[1]), True),
     ("pr", "pr-manifest-event-push", m_set(["workflow", "event_name"], "push", "manifest.workflow.pull_request: type object"), True),
     # both sides changed alike, valid for the schema: the table itself must refuse the combination
     ("pr", "pr-both-head-under-my", both_pr("head_ref", "my/candidate", "manifest run identity with its source commit is a row of the table"), True),
@@ -596,8 +600,13 @@ def main():
         for vname, (d, tt) in var.items():
             rc, out = verify(d, tt, os.path.join(work, f"valid-{vname}.json"))
             record(f"valid-{vname}-fixture", 0, rc, out, "checks passed")
+    row = ("pr" if t0["event-name"] == "pull_request" else "my" if t0["ref"].startswith("refs/heads/my/") else "ci")
+    if real:
+        var = {row: (base, t0)} if row in ("my", "pr") else {}
     if ok:
         for name, mutate, seal in NEGATIVE:
+            if row == "pr" and name in PUSH_ONLY:
+                continue
             d = os.path.join(work, name)
             copy_artifact(base, d)
             os.makedirs(d + "-trusted")
@@ -607,7 +616,9 @@ def main():
                 reseal(d)
             rc, out = verify(d, t, os.path.join(work, name + ".json"))
             record(name, 1, rc, out, frag)
-        for vname, name, mutate, seal in VARIANT_NEGATIVE if var else []:
+        for vname, name, mutate, seal in VARIANT_NEGATIVE:
+            if vname not in var:
+                continue
             vbase, vt = var[vname]
             d = os.path.join(work, name)
             copy_artifact(vbase, d)

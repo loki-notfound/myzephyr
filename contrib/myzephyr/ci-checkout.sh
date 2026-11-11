@@ -46,8 +46,8 @@ if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
   [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || fail "pull request base sha '$base_sha' not readable"
   g fetch --quiet --no-tags --no-recurse-submodules origin "+$GITHUB_SHA:refs/myzephyr/pr-merge"
   [ "$(g rev-parse refs/myzephyr/pr-merge)" = "$GITHUB_SHA" ] || fail "fetched merge commit differs from GITHUB_SHA"
-  parents=$(g cat-file commit "$GITHUB_SHA" | sed -n '/^$/q;s/^parent //p' | tr '\n' ' ')
-  [ "$parents" = "$base_sha $MYZ_BUILD_SHA " ] || fail "merge commit $GITHUB_SHA has parents '$parents', expected '$base_sha $MYZ_BUILD_SHA'"
+  parents=$(g rev-list --parents -n 1 "$GITHUB_SHA" | cut -d' ' -f2-)
+  [ "$parents" = "$base_sha $MYZ_BUILD_SHA" ] || fail "merge commit $GITHUB_SHA has parents '$parents', expected '$base_sha $MYZ_BUILD_SHA'"
   [ "$(g rev-parse "$GITHUB_SHA^{tree}")" = "$(g rev-parse "$MYZ_BUILD_SHA^{tree}")" ] \
     || fail "merge commit $GITHUB_SHA has another tree than the head $MYZ_BUILD_SHA: the workflow that runs would not be the head's"
   g merge-base --is-ancestor "$base_sha" "$MYZ_BUILD_SHA" || fail "base $base_sha is not an ancestor of the head: not a fast-forward"

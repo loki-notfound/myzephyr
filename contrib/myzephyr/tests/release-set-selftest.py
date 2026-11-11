@@ -175,7 +175,7 @@ if names == want:
                and [c["subject"] for c in man["source"]["own_commits"]] == ["Add the first own change", "Add the second own change"])
     readme = tarfile.open(os.path.join(out, f"zephyrd-{vs}-macos-x86_64.tar.gz")).extractfile(f"zephyrd-{vs}-macos-x86_64/README.txt").read().decode()
     record("README: personal build, not zephyr-backports, verify, replace, quarantine note",
-           all(x in readme for x in ("personal build", "not part of zephyr-backports", "gpg --verify SHA256SUMS.asc",
+           all(x in readme for x in ("personal build", "not part of zephyr-backports", "gpg --verify SHA256SUMS.asc   (SHA256SUMS.asc is the clear-signed",
                                      "Keep the data directory", "com.apple.quarantine", "Status: complete")), readme[:300])
     p2, out2 = run("valid-again", d)
     record("a second run gives a byte-identical set", p2.returncode == 0 and all(

@@ -236,7 +236,7 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
     notes = open(log + ".notes").read() if os.path.exists(log + ".notes") else ""
     record("notes: base, own commit not yet reported, platforms, verification, run, owner statement placeholder",
            all(x in notes for x in ("v-selftest-base", "Add the own change (upstream report: not yet reported)", "windows-x86_64",
-                                    "gpg --verify SHA256SUMS.asc", RUN_URL, "TO BE STATED BY THE OWNER")), notes[:400])
+                                    "gpg --verify SHA256SUMS.asc` (the clear-signed", RUN_URL, "TO BE STATED BY THE OWNER")), notes[:400])
     record("never publishes and never signs", not any("--draft=false" in x or x == "edit" for cc in creates for x in cc))
 
     # refusals

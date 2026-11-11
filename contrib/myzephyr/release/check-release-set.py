@@ -193,7 +193,7 @@ def notes(a, mans, vs):
     lines += ["", f"Full mainnet sync and database resume test of exactly the Linux x86_64 binary `{mans['linux-x86_64']['binary']['sha256']}`: "
               "**TO BE STATED BY THE OWNER BEFORE PUBLISHING** (this script cannot verify them).", "",
               "## Verify", "",
-              "1. `gpg --verify SHA256SUMS.asc SHA256SUMS` (maintainer key, primary fingerprint "
+              "1. `gpg --verify SHA256SUMS.asc` (the clear-signed `SHA256SUMS`; maintainer key, primary fingerprint "
               f"`{m0['own_commit_signer_primary_fingerprint']}`, see the repository README).",
               "2. `sha256sum -c SHA256SUMS`", f"3. `git verify-tag {a.tag}` in a clone; the tag points at `{a.commit}`.",
               "4. Each `*.manifest.json` names the binary's hash, the build manifest and the run.", "",
