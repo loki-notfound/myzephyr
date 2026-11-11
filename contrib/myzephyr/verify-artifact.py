@@ -437,6 +437,11 @@ class Verifier:
         self.check("version", EXPECTED_VERSION.fullmatch(a.expected_version) and a.expected_version.endswith("-" + commit[:9]),
                    f"expected version {a.expected_version} is <number>-{commit[:9]} (never release)")
 
+    def link_inventory_check(self, b, logs):
+        p = os.path.join(logs, "link-inventory.tsv")
+        have = sha256_file(p) if os.path.isfile(p) and not os.path.islink(p) else None
+        self.eq("build", "build.link_inventory_sha256 (build-logs/link-inventory.tsv)", b["link_inventory_sha256"], have)
+
     def semantics(self):
         a, m, d = self.a, self.m, self.d
         commit = a.expected_commit
@@ -511,6 +516,7 @@ class Verifier:
         self.eq("build", "builder.toolchain (build-logs/toolchain.txt)", bl["toolchain"], toolchain)
         self.check("build", "mode=release" in toolchain and f"HEAD {commit}" in toolchain,
                    "toolchain record names mode=release and the expected HEAD")
+        self.link_inventory_check(b, logs)
         steps = read_text(os.path.join(logs, "steps.txt")).splitlines()
         self.eq("build", "build.steps (build-logs/steps.txt)", b["steps"], steps)
         self.check("build", "BUILD release ok" in steps and "container exit 0" in steps,

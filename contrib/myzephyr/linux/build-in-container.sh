@@ -2,7 +2,8 @@
 # Build zephyrd for Linux x86_64 with contrib/depends, inside the builder image
 # (contrib/myzephyr/linux/Dockerfile). Runs as a non-root user.
 #
-#   build-in-container.sh release   depends (Release), then only CMake target "daemon"
+#   build-in-container.sh release   depends (Release), then only CMake target "daemon", then
+#                                   link-inventory.sh (licence inventory of the binary)
 #   build-in-container.sh tests     depends with TESTS=1 (Debug, gtest), then
 #                                   targets "unit_tests" and "test_notifier"
 #
@@ -89,6 +90,10 @@ if [ "$mode" = release ]; then
   step configure cmake "${cmake_args[@]}"
   step build cmake --build "$build_dir" --target daemon --parallel "$JOBS"
   test -x "$build_dir/bin/zephyrd"
+  # what the linker put into zephyrd and the licence texts of its owners (link-inventory.sh);
+  # never fails the build: an incomplete inventory makes the release set's licences incomplete
+  bash contrib/myzephyr/link-inventory.sh "$src" "$build_dir" zephyrd "$host_triplet" "$logs" \
+    > "$logs/link-inventory.log" 2>&1 || echo "link-inventory.sh exit $?" >> "$logs/link-inventory.log"
 else
   step depends make "${depends_args[@]}" TESTS=1
   echo "$mode" > "$marker"

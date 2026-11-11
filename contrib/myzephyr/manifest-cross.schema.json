@@ -356,7 +356,8 @@
         "steps",
         "cmake_options",
         "cmake_target",
-        "cpu_flags"
+        "cpu_flags",
+        "link_inventory_sha256"
       ],
       "additionalProperties": false,
       "properties": {
@@ -401,6 +402,16 @@
         },
         "cpu_flags": {
           "type": "object"
+        },
+        "link_inventory_sha256": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/sha256"
+            }
+          ]
         }
       }
     },

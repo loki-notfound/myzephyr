@@ -129,6 +129,12 @@ def version_state_ok(expected, commit, state):
     return bool(m) and m.group(2) == commit[:9] and state["tags_at_head"] == "none" and state["tags_in_checkout"] == 0
 
 
+def link_inventory(logs):
+    """SHA256 of link-inventory.sh's record in the build logs, or None when the build wrote none."""
+    p = os.path.join(logs, "link-inventory.tsv")
+    return sha256(p) if os.path.isfile(p) else None
+
+
 def recipe(recipe_dir):
     files = {name: sha256(os.path.join(recipe_dir, name)) for name in RECIPE_FILES}
     combined = hashlib.sha256("".join(f"{files[n]}  {n}\n" for n in sorted(files)).encode()).hexdigest()
@@ -217,6 +223,7 @@ def main():
                               "-DCMAKE_SKIP_RPATH=ON"],
             "cmake_target": "daemon",
             "cpu_flags": cpu_flags(a.build_dir),
+            "link_inventory_sha256": link_inventory(logs),
         },
         "runtime_requirements": {
             "interpreter": elf.get("elf_interpreter"),

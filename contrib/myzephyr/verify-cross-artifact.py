@@ -149,6 +149,7 @@ class CrossVerifier(va.Verifier):
         self.eq("build", "builder.toolchain", bl["toolchain"], toolchain)
         self.check("build", f"target={a.target}" in toolchain and f"HEAD {commit}" in toolchain,
                    f"toolchain record names target={a.target} and the expected HEAD")
+        self.link_inventory_check(b, logs)
         steps = va.read_text(os.path.join(logs, "steps.txt")).splitlines()
         self.eq("build", "build.steps", b["steps"], steps)
         self.check("build", f"BUILD {a.target} ok" in steps and "container exit 0" in steps,

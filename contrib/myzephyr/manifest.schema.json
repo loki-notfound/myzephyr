@@ -127,7 +127,7 @@
     },
     "build": {
       "type": "object",
-      "required": ["recipe", "steps", "cmake_options", "cmake_target", "cpu_flags"],
+      "required": ["recipe", "steps", "cmake_options", "cmake_target", "cpu_flags", "link_inventory_sha256"],
       "additionalProperties": false,
       "properties": {
         "recipe": {
@@ -142,7 +142,8 @@
         "steps": {"type": "array", "items": {"type": "string"}},
         "cmake_options": {"type": "array", "items": {"type": "string"}},
         "cmake_target": {"const": "daemon"},
-        "cpu_flags": {"type": "object"}
+        "cpu_flags": {"type": "object"},
+        "link_inventory_sha256": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/sha256"}]}
       }
     },
     "runtime_requirements": {

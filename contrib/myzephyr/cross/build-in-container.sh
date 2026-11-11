@@ -88,4 +88,8 @@ step configure cmake -S . -B "$build_dir" \
 step build cmake --build "$build_dir" --target daemon --parallel "$JOBS"
 test -f "$build_dir/bin/$exe"
 sha256sum "$build_dir/bin/$exe" >> "$steps"
+# what the linker put into the binary and the licence texts of its owners (link-inventory.sh);
+# never fails the build: an incomplete inventory makes the release set's licences incomplete
+bash contrib/myzephyr/link-inventory.sh "$src" "$build_dir" "$exe" "$target" "$logs" \
+  > "$logs/link-inventory.log" 2>&1 || echo "link-inventory.sh exit $?" >> "$logs/link-inventory.log"
 echo "BUILD $target ok" >> "$steps"

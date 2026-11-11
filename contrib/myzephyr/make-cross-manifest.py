@@ -108,6 +108,7 @@ def main():
                               "-DCMAKE_SKIP_RPATH=ON"],
             "cmake_target": "daemon",
             "cpu_flags": mm.cpu_flags(a.build_dir),
+            "link_inventory_sha256": mm.link_inventory(logs),
         },
         "static_report": {"format": fmt, "values": static, "checks": static.get(checks_key)},
         "embedded": {"versions": versions, "seeds": emb.get("embedded_seeds", "").split(),

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "myzephyr/daemon-release-target/1",
+  "title": "myzephyr release set: manifest of one platform's archive",
+  "description": "Written by make-release-set.py, checked by draft-release.sh. build_manifest is the verified build manifest of the binary, unchanged.",
+  "type": "object",
+  "required": ["schema", "platform", "target", "version_string", "archive", "binary", "build_manifest_sha256", "build_manifest", "source", "base", "own_commit_signer_primary_fingerprint", "workflow", "run_url", "tested", "not_tested", "third_party_licenses", "manifest_name", "source_date_epoch"],
+  "additionalProperties": false,
+  "$defs": {
+    "sha1": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fingerprint": {"type": "string", "pattern": "^[0-9A-F]{40}$"}
+  },
+  "properties": {
+    "schema": {"const": "myzephyr/daemon-release-target/1"},
+    "platform": {"enum": ["linux-x86_64", "linux-aarch64", "macos-x86_64", "windows-x86_64"]},
+    "target": {"enum": ["x86_64-unknown-linux-gnu", "aarch64-linux-gnu", "x86_64-apple-darwin", "x86_64-w64-mingw32"]},
+    "version_string": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{9}$"},
+    "archive": {
+      "type": "object",
+      "required": ["name", "format", "top_directory", "sha256", "size", "unpacked_binary_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "pattern": "^zephyrd-v[0-9.]+-[0-9a-f]{9}-[a-z0-9_-]+\\.(tar\\.gz|zip)$"},
+        "format": {"enum": ["tar.gz", "zip"]},
+        "top_directory": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 1},
+        "unpacked_binary_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "binary": {
+      "type": "object",
+      "required": ["name", "path", "sha256", "size"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"enum": ["zephyrd", "zephyrd.exe"]},
+        "path": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 1}
+      }
+    },
+    "build_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "build_manifest": {"type": "object"},
+    "source": {
+      "type": "object",
+      "required": ["commit", "commit_time", "own_commits"],
+      "additionalProperties": false,
+      "properties": {
+        "commit": {"$ref": "#/$defs/sha1"},
+        "commit_time": {"type": "integer"},
+        "own_commits": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["commit", "subject", "paths"],
+            "additionalProperties": false,
+            "properties": {
+              "commit": {"$ref": "#/$defs/sha1"},
+              "subject": {"type": "string", "minLength": 1},
+              "paths": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    "base": {"type": "object"},
+    "own_commit_signer_primary_fingerprint": {"$ref": "#/$defs/fingerprint"},
+    "workflow": {"type": "object", "required": ["repository", "ref", "sha", "event_name", "run_id", "run_attempt", "server_url", "pull_request"]},
+    "run_url": {"type": "string", "pattern": "^https://"},
+    "tested": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "not_tested": {"type": "string"},
+    "third_party_licenses": {
+      "type": "object",
+      "required": ["status", "reasons", "entries"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {"enum": ["complete", "incomplete"]},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["owner", "text", "text_sha256", "kind", "source"],
+            "properties": {
+              "owner": {"type": "string"},
+              "text": {"type": "string", "pattern": "^THIRD-PARTY-LICENSES/"},
+              "text_sha256": {"$ref": "#/$defs/sha256"},
+              "kind": {"enum": ["depends", "deb", "tree"]},
+              "source": {"type": "object"}
+            }
+          }
+        }
+      }
+    },
+    "manifest_name": {"type": "string", "pattern": "^zephyrd-v[0-9.]+-[0-9a-f]{9}-[a-z0-9_-]+\\.manifest\\.json$"},
+    "source_date_epoch": {"type": "integer"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"third_party_licenses": {"properties": {"status": {"const": "complete"}}}}},
+      "then": {"properties": {"third_party_licenses": {"properties": {"reasons": {"maxItems": 0}}}}},
+      "else": {"properties": {"third_party_licenses": {"properties": {"reasons": {"minItems": 1}}}}}
+    }
+  ]
+}

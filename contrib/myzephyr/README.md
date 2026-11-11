@@ -83,10 +83,38 @@ the tag locally): with the tag present the build would print `<version>-release`
 | `make-manifest.py`, `manifest.schema.json` | build manifest (`myzephyr/daemon-build-manifest/3`): source commit with `tags_at_head: none` and the fetch mode, signed base, workflow run (with the pull request for a pull-request run), recipe, builder, packages, ELF requirements, artifact hash |
 | `verify-artifact.py` | checks a downloaded release artifact against trusted inputs (see below) |
 | `zephyrd-check.py` | bounded offline-start and default-discovery checks with strict RPC assertions on every sample |
+| `link-inventory.sh` | runs in the builder after the build: re-runs the daemon's link with the linker's trace option, assigns every used input (object, archive member, start file) to its owner (a depends package by its cached build tarball, the source tree, or a Debian package of the image by `dpkg -S`) and copies the licence texts (top of the hash-stamped depends source, `/usr/share/doc/<package>/copyright`, the tree's licence files); anything it cannot establish is an `unresolved` line |
+| `release/make-release-set.py`, `release/release-target.schema.json` | the release set of one run: an archive per platform, a manifest per platform (`myzephyr/daemon-release-target/1`) and `SHA256SUMS` (see "Release set") |
+| `release/compare-pr-run.py` | on a push run: the binary hashes of the pull-request run of the same commit, read from its hash marker artifacts' names, side by side in the run summary; reported, never a gate |
 | `runtime/Dockerfile` | runtime-only Debian 11 arm64 userland (the arm64 manifest of the Linux builder base's index, python3 from the same snapshot) for a second offline start of the AArch64 binary |
-| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made); `run-identity-selftest.py` (each row of the table and one changed value per case) and `ci-checkout-selftest.sh` (a local origin with tags and merge refs over a file URL) |
+| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made); `run-identity-selftest.py` (each row of the table and one changed value per case) and `ci-checkout-selftest.sh` (a local origin with tags and merge refs over a file URL); `link-inventory-selftest.sh` (a small tree linked by the runner's gcc and GNU ld) and `release-set-selftest.py` (synthetic artifacts; also the run comparison against a stub API) |
 | `keys/zephyr-backports-release.asc` | public key that signs the zephyr-backports tags |
 | `keys/myzephyr-maintainer.asc` | public key that signs the own commits |
+
+## Release set
+
+The `package` job needs every build and runtime job of the run. It downloads the four
+artifacts, verifies each again with its own checkout and checks, and makes one archive per
+platform (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `windows-x86_64`) with the fixed
+layout `zephyrd-<version string>-<platform>/`: the binary, the tree's `LICENSE`,
+`THIRD-PARTY-LICENSES/` and `README.txt`. File names carry the version string the binary
+reports, never a tag. Linux and macOS get `.tar.gz` (GNU tar `--format=gnu --sort=name
+--mtime=@SOURCE_DATE_EPOCH --owner=0 --group=0 --numeric-owner --mode=u+rwX,go+rX,go-w`, gzip
+without name or time), Windows a `.zip` with fixed entry times and modes; SOURCE_DATE_EPOCH is
+the commit time. Each archive is read back and must hold exactly the staged files and the
+binary whose hash the build manifest names. A manifest per platform records archive and
+binary hashes, the verified build manifest, source, base, own commits, the run, what the
+hosted runners tested, and the licence list. `SHA256SUMS` lists the archives and manifests,
+never itself. The set is one artifact, `release-set-<commit>`, kept 90 days on pushes to
+`my/**`.
+
+`THIRD-PARTY-LICENSES/` comes from the build's link inventory (`link-inventory.sh`), whose
+hash the build manifest records (`build.link_inventory_sha256`, checked by the verifiers).
+The list is "complete" only if the traced re-link was identical, nothing is unresolved,
+every used input's owner has a text and every depends source hash equals its pin in
+`contrib/depends/packages/`; otherwise the set is written with status "incomplete" and the
+reasons (manifest, `INDEX.txt`, `README.txt`, a warning in the job log), and the release
+script refuses it. The list is reviewed before any release.
 
 ## Unit tests
 

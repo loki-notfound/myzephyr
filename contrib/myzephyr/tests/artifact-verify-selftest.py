@@ -392,6 +392,8 @@ NEGATIVE = [
     ("source-date-epoch-changed", m_set(["builder", "source_date_epoch"], lambda v: v - 1, "builder.source_date_epoch"), True),
     ("base-image-changed", m_set(["builder", "base_image"], "docker.io/library/debian@sha256:" + "0" * 64, "builder.base_image"), True),
     ("cmake-options-changed", m_set(["build", "cmake_options"], lambda v: v[:1], "build.cmake_options"), True),
+    ("link-inventory-claimed-without-file", m_set(["build", "link_inventory_sha256"], "0" * 64, "build.link_inventory_sha256"), True),
+    ("link-inventory-file-unrecorded", file_append("build-logs/link-inventory.tsv", "kind\tpath\towner\tsha256\tdetail\n", "build.link_inventory_sha256"), True),
     ("source-identity-changed", identity_changed, True),
     ("package-record-changed", file_append("build-logs/builder-packages.tsv", "extra\t1.0\tamd64\n", "builder.package_inventory_sha256"), True),
     ("toolchain-record-changed", file_replace("build-logs/toolchain.txt", "JOBS=4", "JOBS=3", "builder.toolchain"), True),
@@ -525,6 +527,7 @@ def convert_to_schema_3(m):
     src.update({"tags_at_head": "none", "tags_in_checkout": 0, "fetch_mode": "depth-1-no-tags+unshallow-no-tags"})
     m["workflow"]["pull_request"] = None
     m["checks"]["workflow_identity_allowed"] = m["checks"].pop("workflow_sha_is_source_commit")
+    m["build"]["link_inventory_sha256"] = None   # that run wrote no link inventory
 
 
 def identity_variant(work, base, t, name, ref, event, sha, pr):
