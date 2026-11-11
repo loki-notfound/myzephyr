@@ -85,6 +85,7 @@ the tag locally): with the tag present the build would print `<version>-release`
 | `zephyrd-check.py` | bounded offline-start and default-discovery checks with strict RPC assertions on every sample |
 | `link-inventory.sh` | runs in the builder after the build: re-runs the daemon's link with the linker's trace option, assigns every used input (object, archive member, start file) to its owner (a depends package by its cached build tarball, the source tree, or a Debian package of the image by `dpkg -S`) and copies the licence texts (top of the hash-stamped depends source, `/usr/share/doc/<package>/copyright`, the tree's licence files); anything it cannot establish is an `unresolved` line |
 | `release/make-release-set.py`, `release/release-target.schema.json` | the release set of one run: an archive per platform, a manifest per platform (`myzephyr/daemon-release-target/1`) and `SHA256SUMS` (see "Release set") |
+| `release/draft-release.sh`, `release/check-release-set.py` | run locally by the owner after the tag exists, never in CI: checks the run, the tag (`verify-source.sh --release-tag`), GitHub's digest of the release-set artifact and the set itself, then makes a draft release (`--dry-run` prints the command instead); see "Release set" |
 | `release/compare-pr-run.py` | on a push run: the binary hashes of the pull-request run of the same commit, read from its hash marker artifacts' names, side by side in the run summary; reported, never a gate |
 | `runtime/Dockerfile` | runtime-only Debian 11 arm64 userland (the arm64 manifest of the Linux builder base's index, python3 from the same snapshot) for a second offline start of the AArch64 binary |
 | `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made); `run-identity-selftest.py` (each row of the table and one changed value per case) and `ci-checkout-selftest.sh` (a local origin with tags and merge refs over a file URL); `link-inventory-selftest.sh` (a small tree linked by the runner's gcc and GNU ld) and `release-set-selftest.py` (synthetic artifacts; also the run comparison against a stub API) |
@@ -115,6 +116,18 @@ every used input's owner has a text and every depends source hash equals its pin
 `contrib/depends/packages/`; otherwise the set is written with status "incomplete" and the
 reasons (manifest, `INDEX.txt`, `README.txt`, a warning in the job log), and the release
 script refuses it. The list is reviewed before any release.
+
+`release/draft-release.sh <tag> <run-id>` is run locally after the owner has pushed the
+signed tag on the already proven commit; nothing is rebuilt. It requires a successful push
+run of this workflow on `my/v2.3.0` whose head commit is the tag's commit (the branch head
+or an ancestor of it), verifies the tag in a fresh clone without tags (annotated, signed by
+the pinned maintainer key, name `v*-sec.*-my.*`), downloads the run's `release-set-<commit>`
+artifact and checks GitHub's digest, `SHA256SUMS`, every manifest (commit, run and attempt,
+version string without `release`, complete licences) and every archive, refuses if a
+release for the tag exists, and runs `gh release create --draft --verify-tag` with exactly
+those files and notes made from the manifests. It never publishes and never signs;
+`--dry-run` prints the command and file list. `tests/draft-release-selftest.py` runs it
+against a stubbed `gh` with throwaway keys and a synthetic repository.
 
 ## Unit tests
 
