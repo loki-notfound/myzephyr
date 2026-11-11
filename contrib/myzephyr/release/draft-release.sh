@@ -92,9 +92,9 @@ clone=$workdir/clone
 git clone -q --no-checkout --no-tags "$origin" "$clone"
 g() { git -C "$clone" "$@"; }
 g config remote.origin.tagOpt --no-tags
-g fetch -q --no-tags origin "refs/tags/$tag:refs/tags/$tag" || refuse "tag $tag not on $origin"
-g fetch -q --no-tags origin "+refs/heads/$branch:refs/myzephyr/branch-head" || refuse "branch $branch not on $origin"
-g fetch -q --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
+g fetch -q --no-tags --no-recurse-submodules origin "refs/tags/$tag:refs/tags/$tag" || refuse "tag $tag not on $origin"
+g fetch -q --no-tags --no-recurse-submodules origin "+refs/heads/$branch:refs/myzephyr/branch-head" || refuse "branch $branch not on $origin"
+g fetch -q --no-tags --no-recurse-submodules "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
 tag_commit=$(g rev-parse --verify --quiet "refs/tags/$tag^{commit}") || refuse "tag $tag does not name a commit"
 [ "$tag_commit" = "$head_sha" ] || refuse "tag $tag points at $tag_commit, the run built $head_sha"
 [ "$(g rev-parse refs/myzephyr/branch-head)" = "$branch_head" ] || refuse "branch $branch moved while checking"

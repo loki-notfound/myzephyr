@@ -26,8 +26,11 @@ workflow uses none, and `contents: read` is its only permission.
 
 Every job checks out exactly the built commit with `fetch-depth: 1` and `fetch-tags:
 false` (with `fetch-depth: 0` actions/checkout fetches every tag), then `ci-checkout.sh`
-completes the history with `git fetch --no-tags --unshallow` and fails if any tag is in
-the checkout. That commit must be the signed zephyr-backports base tag plus own commits:
+completes the history with `git fetch --no-tags --unshallow`, fetches the base tag into
+`refs/myzephyr-base/` and fails if any tag is in the checkout. No fetch recurses into
+submodules: they stay at depth 1 on the commits recorded in the built commit, and the
+submodule status must be the same before and after the fetches. That commit must be the
+signed zephyr-backports base tag plus own commits:
 
 - the base tag object, its name, its commit and its signature by the backports key
   (primary fingerprint `FB39 94F0 997C A6F0 43D7  2491 9EFF 03F5 27D2 40A1`) are
@@ -198,7 +201,7 @@ lists the options.
 From a clean checkout of the branch head, with the base tag fetched into a ref:
 
 ```sh
-git fetch --no-tags https://github.com/zephyr-backports/zephyr.git \
+git fetch --no-tags --no-recurse-submodules https://github.com/zephyr-backports/zephyr.git \
   +refs/tags/v2.3.0-sec.2:refs/myzephyr-base/v2.3.0-sec.2
 # verify-source.sh with the values from the workflow's env block, then:
 contrib/myzephyr/linux/run-builder.sh podman release <checkout> <new-log-dir>

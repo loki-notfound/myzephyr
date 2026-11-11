@@ -15,8 +15,10 @@
 # has one, so every binary reports <version>-<9 hex of MYZ_BUILD_SHA>; "release" is
 # refused by every checker. A pull request from a branch under my/ or from
 # ci/daemon-release-baseline is refused: that branch already has its own push run.
-# The compiling jobs use separate checkouts (src-release, src-tests, src-cross), fetch the
-# signed zephyr-backports base tag into a ref outside refs/tags, and run
+# ci-checkout.sh also fetches the signed zephyr-backports base tag into a ref outside
+# refs/tags, in every job, and no fetch recurses into submodules (the submodules stay at the
+# commits actions/checkout put them on). The compiling jobs use separate checkouts
+# (src-release, src-tests, src-cross) and run
 # contrib/myzephyr/verify-source.sh before building: base tag object and signature
 # (pinned primary fingerprint), HEAD = MYZ_BUILD_SHA, base ancestry, every own commit above
 # the base (no merges, "Origin: myzephyr", maintainer signature with pinned primary
@@ -175,7 +177,6 @@ jobs:
         run: |
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
           bash src-release/contrib/myzephyr/ci-checkout.sh src-release "$out/checkout-record.txt"
-          git -C src-release fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
           src-release/contrib/myzephyr/verify-source.sh --checkout src-release --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
@@ -253,7 +254,6 @@ jobs:
         run: |
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
           bash src-tests/contrib/myzephyr/ci-checkout.sh src-tests "$out/checkout-record.txt"
-          git -C src-tests fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
           src-tests/contrib/myzephyr/verify-source.sh --checkout src-tests --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
@@ -304,7 +304,6 @@ jobs:
         run: |
           v="$RUNNER_TEMP/out/artifact-verification"; mkdir -p "$v"
           bash tooling/contrib/myzephyr/ci-checkout.sh tooling "$v/checkout-record.txt"
-          git -C tooling fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
           tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
@@ -386,7 +385,6 @@ jobs:
         run: |
           v="$RUNNER_TEMP/out/artifact-verification"; mkdir -p "$v"
           bash tooling/contrib/myzephyr/ci-checkout.sh tooling "$v/checkout-record.txt"
-          git -C tooling fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
           tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
@@ -451,7 +449,6 @@ jobs:
         run: |
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
           bash src-cross/contrib/myzephyr/ci-checkout.sh src-cross "$out/checkout-record.txt"
-          git -C src-cross fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
           src-cross/contrib/myzephyr/verify-source.sh --checkout src-cross --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
@@ -589,7 +586,6 @@ jobs:
         run: |
           v=out/artifact-verification
           bash tooling/contrib/myzephyr/ci-checkout.sh tooling "$v/checkout-record.txt"
-          git -C tooling fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
           bash tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
@@ -683,7 +679,6 @@ jobs:
         run: |
           v="$RUNNER_TEMP/out/artifact-verification"; mkdir -p "$v"
           bash tooling/contrib/myzephyr/ci-checkout.sh tooling "$v/checkout-record.txt"
-          git -C tooling fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
           tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
