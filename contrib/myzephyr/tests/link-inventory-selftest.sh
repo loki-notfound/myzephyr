@@ -12,6 +12,11 @@
 # and their hashes, identical re-link, zero unresolved; then single changes: an external
 # archive without licence, an input from outside every known owner, a source tarball whose
 # hash differs from its stamp, a link.txt without the output option, no external header.
+# Source headers (R13-2): external/ext without a licence file but with licence statements in
+# the leading comment blocks of its files: each distinct block copied verbatim, recorded
+# "tree-header from=source-header" with file, lines and the file's hash, nothing unresolved;
+# leading comments without a licence statement (or one only after code): still unresolved;
+# a licence file present: the file is taken, no header row.
 set -euo pipefail
 export LC_ALL=C
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -88,6 +93,31 @@ w=$work/noout; mkdir "$w"; make_tree "$w"; sed -i 's# -o ../../bin/zephyrd # -o 
 has "$w" "^status\tunresolved\t-\t-\toutput option not found" && record 0 "link.txt without the output option: unresolved" || record 1 "link.txt without the output option"
 w=$work/nohdr; mkdir "$w"; make_tree "$w"; rm "$w/src/build/release/src/daemon/CMakeFiles/daemon.dir/depend.make"; run_li "$w"
 has "$w" "^status\tunresolved\t-\t-\tno external/ header found" && record 0 "no external header in the dependency files: unresolved" || record 1 "no external header: unresolved"
+
+w=$work/hdrlic; mkdir "$w"; make_tree "$w"; rm "$w/src/external/ext/LICENSE"
+printf '/*\n * ext (synthetic)\n * Licensed under the MIT License; see the statement below.\n */\nint ext_h;\n' > "$w/src/external/ext/ext.h"
+cp "$w/src/external/ext/ext.h" "$w/src/external/ext/ext2.h"
+printf '#!/bin/sh\n\n// Copyright nobody (synthetic)\n// This file is in the Public Domain.\nint ext_c;\n' > "$w/src/external/ext/ext.c"
+run_li "$w"
+has "$w" "^license\tlicenses/tree-header/external/ext/ext\.h\.lines-1-4\.txt\ttree:external/ext\t[0-9a-f]{64}\ttree-header from=source-header file=external/ext/ext\.h lines=1-4 file_sha256=$(sha256sum "$w/src/external/ext/ext.h" | cut -d' ' -f1)$" \
+  && record 0 "source header: block of ext.h recorded with file, lines and file hash" || record 1 "source header: block of ext.h recorded with file, lines and file hash"
+has "$w" "^license\tlicenses/tree-header/external/ext/ext\.c\.lines-3-4\.txt\ttree:external/ext\t" \
+  && record 0 "source header: // block after a #! line and a blank line found (lines 3-4)" || record 1 "source header: // block after #! and blank line"
+! has "$w" "ext2\.h" && record 0 "source header: identical block of ext2.h not recorded twice" || record 1 "source header: identical block of ext2.h not recorded twice"
+cmp -s <(sed -n 1,4p "$w/src/external/ext/ext.h") "$w/logs/licenses/tree-header/external/ext/ext.h.lines-1-4.txt" \
+  && record 0 "source header: text copied verbatim" || record 1 "source header: text copied verbatim"
+[ "$(nunres "$w")" = 0 ] && record 0 "source header: nothing unresolved" || record 1 "source header: nothing unresolved" "$(grep unresolved "$w/logs/link-inventory.tsv")"
+w=$work/hdrnolic; mkdir "$w"; make_tree "$w"; rm "$w/src/external/ext/LICENSE"
+printf '/* ext (synthetic), Copyright nobody */\nint ext_h;\n' > "$w/src/external/ext/ext.h"
+printf 'int ext_c;\n/* Licensed under the MIT License, but not in the leading block */\n' > "$w/src/external/ext/ext.c"
+run_li "$w"
+has "$w" "^status\tunresolved\ttree:external/ext\t-\tno licence file in external/ext or above it within its boundary, and no licence statement in a source header" \
+  && ! has "$w" "tree-header" && record 0 "no licence statement in a leading comment block: unresolved" || record 1 "no licence statement in a leading comment block: unresolved"
+w=$work/filewins; mkdir "$w"; make_tree "$w"
+printf '/* Licensed under the MIT License (synthetic) */\nint ext_h;\n' > "$w/src/external/ext/ext.h"
+run_li "$w"
+has "$w" "^license\tlicenses/tree/external/ext/LICENSE\ttree:external/ext\t" && ! has "$w" "tree-header" \
+  && record 0 "licence file present: the file is taken, no source-header row" || record 1 "licence file present: the file is taken, no source-header row"
 
 echo "$passed/$((passed + failed)) cases as expected"
 [ "$failed" = 0 ]

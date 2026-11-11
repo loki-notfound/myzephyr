@@ -87,7 +87,7 @@
               "owner": {"type": "string"},
               "text": {"type": "string", "pattern": "^THIRD-PARTY-LICENSES/"},
               "text_sha256": {"$ref": "#/$defs/sha256"},
-              "kind": {"enum": ["depends", "deb", "tree"]},
+              "kind": {"enum": ["depends", "deb", "tree", "tree-header"]},
               "source": {"type": "object"}
             }
           }

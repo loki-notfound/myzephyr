@@ -204,7 +204,9 @@ def licences(platform, art, manifest, checkout, stage):
             if pin is None or pin != detail.get("source_sha256"):
                 reasons.append(f"{r['owner']}: source hash {detail.get('source_sha256')} is not the pinned {pin}")
         entries.append(e)
-        index.append(f"{rel}\n    owner {r['owner']}\n    from {r['detail']}\n    sha256 {r['sha256']}")
+        note = ("\n    FROM SOURCE HEADER: the verbatim leading comment block of the file named below; the library"
+                "\n    ships no licence file") if e["kind"] == "tree-header" else ""
+        index.append(f"{rel}\n    owner {r['owner']}{note}\n    from {r['detail']}\n    sha256 {r['sha256']}")
     status = "complete" if not reasons else "incomplete"
     head = [f"Licence texts of everything linked into {PLATFORMS[platform][1]} ({platform}), from the link inventory",
             "of its build (link-inventory.sh). Status: " + status + "."]

@@ -29,6 +29,15 @@
 #      tree      the first directory from the source directory upward with such files,
 #                stopping at the tree root; inside external/<name> it never goes above
 #                external/<name>, and the tree's own code takes the top-level LICENSE.
+#      tree, no licence file within the boundary: the verbatim licence statement from the
+#                source headers of the owner directory itself: the leading comment block
+#                (/* ... */ or consecutive // lines, after blank lines and a #! line) of each
+#                C/C++ source and header file directly in it, if that block contains
+#                "license", "licence", "public domain" or "permission is hereby granted"
+#                (any case); every distinct block is copied unchanged to
+#                licenses/tree-header/<file>.lines-<first>-<last>.txt and recorded as
+#                "tree-header from=source-header file=<path> lines=<first>-<last>
+#                file_sha256=<hash of the source file>". Nothing is paraphrased or supplied.
 #    No text found is an "unresolved" line, never a silent omission.
 # Writes <logs-dir>/link-inventory.tsv (kind, path, owner, sha256, detail), the raw trace
 # <logs-dir>/link-trace.txt and <logs-dir>/daemon-link.txt. Paths are as seen in the image.
@@ -139,6 +148,32 @@ tree_licence_dir() {  # tree_licence_dir <relative dir>: prints the directory wh
   done
 }
 
+header_block() {  # header_block <file>: "<first> <last>" of its leading comment block if it states a licence
+  awk 'NR == 1 && /^#!/ { next }
+       state == 0 && /^[ \t]*$/ { next }
+       state == 0 { if ($0 ~ /^[ \t]*\/\*/) { state = 1; s = NR } else if ($0 ~ /^[ \t]*\/\//) { state = 2; s = NR } else exit }
+       state == 1 { txt = txt $0 "\n"; e = NR; if ($0 ~ /\*\//) exit; next }
+       state == 2 { if ($0 ~ /^[ \t]*\/\//) { txt = txt $0 "\n"; e = NR; next } else exit }
+       END { if (e && tolower(txt) ~ /licen[cs]e|public domain|permission is hereby granted/) print s, e }' "$1"
+}
+header_licence() {  # header_licence <owner> <relative dir>: licence rows from source headers; fails if none
+  local o=$1 d=$2 f rel a b out h n=0
+  local -A seen=()
+  while IFS= read -r f; do
+    read -r a b < <(header_block "$f") || continue
+    [ -n "${a:-}" ] || continue
+    rel=${f#"$src/"}; out=$lic/tree-header/$rel.lines-$a-$b.txt
+    mkdir -p "$(dirname "$out")"; sed -n "${a},${b}p" "$f" > "$out"
+    h=$(sha "$out")
+    if [ -n "${seen[$h]:-}" ]; then rm -f "$out"; continue; fi
+    seen[$h]=1
+    row license "${out#"$logs/"}" "$o" "$h" "tree-header from=source-header file=$rel lines=$a-$b file_sha256=$(sha "$f")"
+    n=$((n + 1))
+  done < <(find "$src/$d" -maxdepth 1 -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' \
+             -o -name '*.h' -o -name '*.hh' -o -name '*.hpp' -o -name '*.hxx' -o -name '*.inl' -o -name '*.ipp' \) 2> /dev/null | sort)
+  [ "$n" -gt 0 ]
+}
+
 # headers from external/ compiled into the daemon and the used tree archives: every header
 # path in their CMake dependency files (absolute, or relative to the top build directory)
 hdr_dirs=$(for d in "$linkdir" "${!tree_archive_dirs[@]}"; do
@@ -193,7 +228,8 @@ for o in "${!used_owner[@]}"; do
       row license "licenses/deb/$pkg/copyright" "$o" "$(sha "$lic/deb/$pkg/copyright")" "deb package=$pkg version=$ver file=$f" ;;
     tree:*)
       d=${o#tree:}
-      ld=$(tree_licence_dir "$d") || { unresolved "$o" "no licence file in $d or above it within its boundary"; continue; }
+      ld=$(tree_licence_dir "$d") || { header_licence "$o" "$d" \
+        || unresolved "$o" "no licence file in $d or above it within its boundary, and no licence statement in a source header in $d"; continue; }
       [ -z "${done_licence[$ld]:-}" ] || { row license-ref "$ld" "$o" - "same texts as $ld"; continue; }
       done_licence[$ld]=1
       while IFS= read -r f; do

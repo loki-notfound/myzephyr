@@ -13,7 +13,8 @@ Then one change per case: an unresolved inventory line, no inventory, a used own
 text, a depends source hash other than the pin, a re-link that was not identical (each:
 written but "incomplete"); a version "release", a target disagreeing on the commit or the
 run, a binary not matching its manifest, an inventory not matching the manifest, a licence
-text not matching its inventory hash (each: refused, exit 1).
+text not matching its inventory hash (each: refused, exit 1). A licence text taken from a
+source header (kind tree-header) is accepted, "complete", and marked in INDEX.txt.
 """
 import copy
 import gzip
@@ -244,6 +245,33 @@ variant("inventory-not-in-manifest", lambda dv: open(os.path.join(dv, "linux-x86
         1, "does not match the verified manifest")
 variant("licence-text-changed", lambda dv: open(os.path.join(dv, "linux-x86_64", "build-logs", "licenses", "depends", "dep", "COPYING"), "a").write("x"),
         1, "does not match its inventory hash")
+
+# a licence text from a source header (R13-2): accepted, kind tree-header, marked in INDEX.txt
+def header_text(dv):
+    pd = os.path.join(dv, "linux-x86_64")
+    rel = "licenses/tree-header/external/ext/ext.h.lines-1-3.txt"
+    os.makedirs(os.path.join(pd, "build-logs", os.path.dirname(rel)))
+    open(os.path.join(pd, "build-logs", rel), "w").write("/*\n * Licensed under the MIT License (synthetic)\n */\n")
+    h = sha(os.path.join(pd, "build-logs", rel))
+    edit_inv(dv, "linux-x86_64", lambda r: [x for x in r if not (x[0] == "license" and x[2] == "tree:external/ext")]
+             + [["license", rel, "tree:external/ext", h,
+                 "tree-header from=source-header file=external/ext/ext.h lines=1-3 file_sha256=" + "5" * 64]])
+
+
+dv = base_set("tree-header")
+header_text(dv)
+p, outv = run("tree-header", dv)
+mh = json.load(open(os.path.join(outv, f"zephyrd-{vs}-linux-x86_64.manifest.json"))) if p.returncode == 0 else {}
+lic = mh.get("third_party_licenses", {})
+eh = [e for e in lic.get("entries", []) if e.get("owner") == "tree:external/ext"]
+idx = ""
+if p.returncode == 0:
+    with tarfile.open(os.path.join(outv, f"zephyrd-{vs}-linux-x86_64.tar.gz")) as tf:
+        idx = tf.extractfile(f"zephyrd-{vs}-linux-x86_64/THIRD-PARTY-LICENSES/INDEX.txt").read().decode()
+record("licence text from a source header: accepted, kind tree-header, status complete, marked in INDEX.txt",
+       p.returncode == 0 and lic.get("status") == "complete" and len(eh) == 1 and eh[0]["kind"] == "tree-header"
+       and eh[0]["source"].get("from") == "source-header" and eh[0]["source"].get("lines") == "1-3"
+       and "FROM SOURCE HEADER" in idx and "file=external/ext/ext.h lines=1-3" in idx, (p.stdout + p.stderr)[-300:])
 
 # compare-pr-run.py against a loopback stub of the REST API (synthetic runs and artifact names)
 import threading
