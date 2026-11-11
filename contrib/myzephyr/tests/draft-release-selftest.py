@@ -23,12 +23,20 @@ artifact expired. Usage: tag name outside v*-sec.*-my.*, run id not a number, no
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import zipfile
+
+def safe_name(title):
+    """Directory name for a case title: only A-Za-z0-9._- (actions/upload-artifact refuses
+    some characters in uploaded paths; check-upload-paths.py --strict). The title itself is
+    kept in the results and in title.txt in the case directory."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", title).strip("-.") or "case"
+
 
 here = os.path.dirname(os.path.abspath(__file__))
 tools = os.path.dirname(here)
@@ -192,8 +200,9 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
 
     def scenario(name, *, run_over=None, set_dir=None, digest=None, expired=False, release_exists=False, args=None, setup=None,
                  want_exit=0, frag=""):
-        d = os.path.join(work, "case-" + name)
+        d = os.path.join(work, "case-" + safe_name(name))
         os.makedirs(d)
+        open(os.path.join(d, "title.txt"), "w").write(name + "\n")
         runj = {"id": int(RUN), "path": ".github/workflows/daemon-release-baseline.yml", "event": "push", "head_branch": BRANCH,
                 "status": "completed", "conclusion": "success", "run_attempt": 1, "head_sha": C,
                 "html_url": f"https://github.com/{REPO}/actions/runs/{RUN}", **(run_over or {})}

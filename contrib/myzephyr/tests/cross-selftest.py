@@ -18,6 +18,7 @@ the named diagnostic. Exit 0 when every case gives the intended result.
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -41,9 +42,16 @@ def record(name, ok, detail=""):
     print(f"{'ok  ' if ok else 'FAIL'} {name}" + (f" -- {detail}" if detail and not ok else ""))
 
 
+def safe_name(title):
+    """Directory name for a case title: only A-Za-z0-9._- (actions/upload-artifact refuses
+    some characters in uploaded paths; check-upload-paths.py --strict). The title itself is
+    kept in the results and in title.txt where the case has a directory of its own."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", title).strip("-.") or "case"
+
+
 def newdir(tag):
     n[0] += 1
-    d = os.path.join(work, f"{n[0]:03d}-{tag}")
+    d = os.path.join(work, f"{n[0]:03d}-{safe_name(tag)}")
     os.makedirs(d)
     return d
 

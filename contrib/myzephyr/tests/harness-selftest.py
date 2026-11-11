@@ -24,6 +24,7 @@ import json
 import types
 import urllib.error
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -203,9 +204,16 @@ def listening(ports):
     return out
 
 
+def safe_name(title):
+    """Directory name for a case title: only A-Za-z0-9._- (actions/upload-artifact refuses
+    some characters in uploaded paths; check-upload-paths.py --strict). The title itself is
+    kept in the results and in title.txt where the case has a directory of its own."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", title).strip("-.") or "case"
+
+
 def run(name, mode, scenario, want_exit, max_s, binary=stub, extra=(), log=None, want_checks=None, want_problem=None,
         held_ports=(), env_extra=None):
-    log = log or os.path.join(work, name.replace(" ", "-"))
+    log = log or os.path.join(work, safe_name(name))
     data = log + "-data"
     env = dict(os.environ, STUB_SCENARIO=scenario, **(env_extra or {}))
     cmd = [sys.executable, "-I", check_py, mode, "--zephyrd", binary, "--data-dir", data,

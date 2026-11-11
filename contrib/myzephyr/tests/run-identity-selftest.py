@@ -13,6 +13,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -109,10 +110,18 @@ for text, want in (("none", None), ('{"number": 7}', ValueError), ("[]", ValueEr
     record(f"parse_pull_request({text[:20]!r})", ok)
 
 
+def safe_name(title):
+    """Directory name for a case title: only A-Za-z0-9._- (actions/upload-artifact refuses
+    some characters in uploaded paths; check-upload-paths.py --strict). The title itself is
+    kept in the results and in title.txt where the case has a directory of its own."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", title).strip("-.") or "case"
+
+
 # 2. the CLI as a workflow step runs it
 def cli(name, ctx, payload, want_exit, want_env=None):
-    d = os.path.join(work, name.replace(" ", "-").replace("/", "-"))
+    d = os.path.join(work, safe_name(name))
     os.makedirs(d)
+    open(os.path.join(d, "title.txt"), "w").write(name + "\n")
     ev = os.path.join(d, "event.json")
     json.dump(payload, open(ev, "w"))
     genv = os.path.join(d, "github-env")
