@@ -64,7 +64,7 @@
 set -euo pipefail
 export LC_ALL=C
 
-ALLOWED_PATHS='^(src/p2p/net_node\.h|src/p2p/net_node\.inl|contrib/depends/packages/gtest\.mk|README\.md|\.github/workflows/(daemon-release-baseline|build|depends|tests|provenance)\.yml|contrib/myzephyr/.+)$'
+ALLOWED_PATHS='^(src/p2p/net_node\.h|src/p2p/net_node\.inl|contrib/depends/packages/gtest\.mk|README\.md|\.github/workflows/(daemon-release-baseline|build|depends|tests|provenance|gitian)\.yml|contrib/myzephyr/.+)$'
 SOURCE_PATHS='^(src/|contrib/depends/packages/gtest\.mk$)'
 
 usage() { echo "usage: see the header of $0" >&2; exit 2; }

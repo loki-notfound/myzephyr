@@ -2,8 +2,8 @@ name: ci/gh-actions/gitian
 
 on:
   push:
-    tags:
-      - '*'
+    tags-ignore:
+      - 'v*-sec.*-my.*'
 
 jobs:
   build-gitian:

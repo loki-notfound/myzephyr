@@ -39,7 +39,9 @@ signed zephyr-backports base tag plus own commits:
   trailer `Origin: myzephyr`, a good signature by the maintainer key (primary
   fingerprint `31DA 39AB 43E0 CA67 F1F3  A661 BA2A FF22 DF8A 4A13`), and changes only
   to `src/p2p/net_node.h`, `src/p2p/net_node.inl`, the GoogleTest build recipe
-  `contrib/depends/packages/gtest.mk`, `README.md`, the workflow and this directory;
+  `contrib/depends/packages/gtest.mk`, `README.md`, the workflow files
+`daemon-release-baseline`, `build`, `depends`, `tests`, `provenance` and `gitian`
+(`.github/workflows/*.yml`) and this directory;
   a commit changes either source (daemon or that build recipe) or
   tooling/documentation;
 - no tag may point at the head; submodules must be at their recorded commits; the
@@ -218,8 +220,10 @@ zephyr-backports policy of Monero cherry-picks only) exclude pushes to
 `ci/daemon-release-baseline` and to `my/**` and pull requests into `my/**`; with only a
 branch filter on push they never start on a tag push, also not on a `v*-sec.*-my.*` tag.
 The dedicated workflow runs the build and test gates there. Other branches and pull
-requests keep their existing triggers. The inherited `gitian.yml` still starts on every
-tag push.
+requests keep their existing triggers. The inherited `gitian.yml` starts on every tag push
+except a release tag `v*-sec.*-my.*` (`tags-ignore`; with only a tag filter, branch pushes
+never start it); its jobs fetch a Monero build script at the tag's name and are not part of
+a release.
 
 A local replay is a different checkout than CI's: it gets `--local` manifests, which no
 verifier accepts as CI provenance.

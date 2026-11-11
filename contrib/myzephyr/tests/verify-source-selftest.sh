@@ -23,7 +23,8 @@
 #    that is not GnuPG, a gpg that does not run. Release mode (--release-tag): the
 #    maintainer-signed release tag passes; another key, a lightweight tag, a second tag
 #    at HEAD, the tag on another commit, a missing tag, a name outside v*-sec.*-my.* and
-#    a tag object whose header names another tag each fail.
+#    a tag object whose header names another tag each fail. Allowed paths: an own commit
+#    changing .github/workflows/gitian.yml passes, one changing copyright.yml fails.
 # Needs bash 3.2 or later, git and gpg. Git and gpg run with their own empty
 # configuration (no global or system git config, temporary gpg homes). Exit 0 when
 # every case behaves as expected, 1 otherwise.
@@ -263,6 +264,15 @@ run_vs "changed commit message under a valid signature fails (BADSIG)" 1 "BADSIG
 
 at "$base_commit"; own a.txt "Add a"
 run_vs "unsigned own commit fails" 1 "no signature found"
+wf() {  # wf <workflow file name>: a signed own commit that changes only that workflow file
+  mkdir -p "$repo/.github/workflows"; echo "$1" > "$repo/.github/workflows/$1"
+  G add ".github/workflows/$1"
+  printf 'Change %s\n\n- what and why\n\nOrigin: myzephyr\n' "$1" | G commit -q -F - -S"$MAINT"
+}
+at "$base_commit"; wf gitian.yml
+run_vs "own commit changing .github/workflows/gitian.yml passes (allowed path)" 0 "verify-source: ok"
+at "$base_commit"; wf copyright.yml
+run_vs "own commit changing .github/workflows/copyright.yml fails (not an allowed path)" 1 "outside the allowed paths"
 
 at "$good_head"
 # the base tag's payload, signed by the maintainer key instead of the base key
