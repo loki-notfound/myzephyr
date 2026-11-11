@@ -4,8 +4,11 @@
 name: provenance
 on:
   push:
-    branches-ignore: [ci/daemon-release-baseline]
+    # myzephyr: the dedicated workflow covers ci/daemon-release-baseline and my/**; with only a branch
+    # filter set, tag pushes do not start this workflow (unchanged).
+    branches-ignore: [ci/daemon-release-baseline, "my/**"]
   pull_request:
+    branches-ignore: ["my/**"]
 jobs:
   provenance:
     uses: zephyr-backports/zephyr-backports/.github/workflows/provenance.yml@main
