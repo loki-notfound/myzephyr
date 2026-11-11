@@ -15,12 +15,15 @@
 # 2. Refusals: a tag or commit signed in another format, a tag header with a gpgsig
 #    field, a commit with a gpgsig-sha256 field, with two gpgsig fields or with none.
 # 3. verify-source.sh end to end on a repository made here, with keys generated here:
-#    the good repository passes (with and without a signed tag at HEAD); each single
-#    change fails with its message: own commit signed by another key, a changed commit
-#    under a valid signature, an unsigned own commit, the base tag signed by the wrong
-#    key, a tag at HEAD signed by another key, a key file with secret key material, a
+#    the good repository passes; each single change fails with its message: any tag at
+#    HEAD in build mode (signed by the maintainer or lightweight), own commit signed by
+#    another key, a changed commit under a valid signature, an unsigned own commit, the
+#    base tag signed by the wrong key, a key file with secret key material, a
 #    key file with two primary keys, a wrong pinned fingerprint, no gpg in PATH, a gpg
-#    that is not GnuPG, a gpg that does not run.
+#    that is not GnuPG, a gpg that does not run. Release mode (--release-tag): the
+#    maintainer-signed release tag passes; another key, a lightweight tag, a second tag
+#    at HEAD, the tag on another commit, a missing tag, a name outside v*-sec.*-my.* and
+#    a tag object whose header names another tag each fail.
 # Needs bash 3.2 or later, git and gpg. Git and gpg run with their own empty
 # configuration (no global or system git config, temporary gpg homes). Exit 0 when
 # every case behaves as expected, 1 otherwise.
@@ -180,18 +183,19 @@ refuse tag 1 "tag without a signature" < "$o"
 # ---------------------------------------------------------------- 3. verify-source.sh end to end
 run_vs() {  # run_vs <name> <want-exit> <want-text> [env NAME=VALUE ...] -- [option overrides]
   local name=$1 want=$2 text=$3 rc=0 out=$work/vs-$((passed + failed)).txt envs=() bk=$keys/BASE.asc bf=$BASE mk=$keys/MAINT.asc mf=$MAINT bto=$base_tag_object
+  local extra=()
   shift 3
   while [ $# -gt 0 ] && [ "$1" != -- ]; do envs+=("$1"); shift; done
   [ $# -gt 0 ] && shift
   while [ $# -gt 0 ]; do
     case $1 in --base-key) bk=$2 ;; --base-fingerprint) bf=$2 ;; --maintainer-key) mk=$2 ;;
-      --maintainer-fingerprint) mf=$2 ;; --base-tag-object) bto=$2 ;; esac
+      --maintainer-fingerprint) mf=$2 ;; --base-tag-object) bto=$2 ;; *) extra+=("$1" "$2") ;; esac
     shift 2
   done
   env ${envs[@]+"${envs[@]}"} bash "$vs" --checkout "$repo" --expected-head "$(G rev-parse HEAD)" \
     --base-tag v-selftest-base --base-ref refs/myzephyr-base/v-selftest-base --base-commit "$base_commit" \
     --base-tag-object "$bto" --base-key "$bk" --base-fingerprint "$bf" \
-    --maintainer-key "$mk" --maintainer-fingerprint "$mf" --base-repository selftest --out "$out.identity" \
+    --maintainer-key "$mk" --maintainer-fingerprint "$mf" --base-repository selftest ${extra[@]+"${extra[@]}"} --out "$out.identity" \
     > "$out" 2>&1 || rc=$?
   if [ "$rc" = "$want" ] && grep -qF -- "$text" "$out"; then record 0 "verify-source: $name"
   else record 1 "verify-source: $name" "exit $rc (want $want), text '$text' $(grep -qF -- "$text" "$out" && echo found || echo missing); see $out"; fi
@@ -204,12 +208,50 @@ last=$work/vs-$((passed + failed - 1)).txt.identity
 if grep -qx "base_signing_key=$BASE" "$last" && grep -qx "own_commit $good_head=contrib/myzephyr/a.txt" "$last"; then
   record 0 "identity names the base signing key and the own commit"; else record 1 "identity names the base signing key and the own commit" "see $last"; fi
 
-G tag -s -u "$MAINT" -m "release" v-selftest-head
-run_vs "signed tag at HEAD by the maintainer passes" 0 "tags at HEAD: 1"
-G tag -d v-selftest-head > /dev/null
-G tag -s -u "$OTHER" -m "release" v-selftest-head
-run_vs "tag at HEAD signed by another key fails" 1 "tag v-selftest-head at HEAD: signature does not verify"
-G tag -d v-selftest-head > /dev/null
+if grep -qx "tags_at_head=none" "$last" && grep -qx "tags_in_checkout=0" "$last"; then
+  record 0 "identity records no tag at HEAD and no tag in the checkout"; else record 1 "identity records no tag at HEAD and no tag in the checkout" "see $last"; fi
+
+# build mode: no tag at HEAD, whoever signed it
+G tag -s -u "$MAINT" -m "release" v2.3.0-sec.9-my.9
+run_vs "build mode: maintainer-signed tag at HEAD fails" 1 "a build checkout must have no tag at HEAD"
+G tag -d v2.3.0-sec.9-my.9 > /dev/null
+G tag v-lightweight
+run_vs "build mode: lightweight tag at HEAD fails" 1 "a build checkout must have no tag at HEAD"
+G tag -d v-lightweight > /dev/null
+G tag v-elsewhere "$base_commit"
+run_vs "build mode: a tag on another commit is counted, not refused" 0 "tags at HEAD: none"
+last=$work/vs-$((passed + failed - 1)).txt.identity
+if grep -qx "tags_in_checkout=1" "$last"; then record 0 "identity counts the tag in the checkout"; else record 1 "identity counts the tag in the checkout" "see $last"; fi
+G tag -d v-elsewhere > /dev/null
+
+# release mode
+R=v2.3.0-sec.9-my.9
+G tag -s -u "$MAINT" -m "release" "$R"
+run_vs "release mode: maintainer-signed release tag passes" 0 "tags at HEAD: $R" -- --release-tag "$R"
+last=$work/vs-$((passed + failed - 1)).txt.identity
+if grep -qx "tags_at_head=$R" "$last" && grep -qx "release_tag $R=$(G rev-parse "refs/tags/$R") $MAINT" "$last"; then
+  record 0 "identity names the release tag object and signer"; else record 1 "identity names the release tag object and signer" "see $last"; fi
+G tag v-second
+run_vs "release mode: a second tag at HEAD fails" 1 "expected exactly $R" -- --release-tag "$R"
+G tag -d v-second > /dev/null
+run_vs "release mode: name outside v*-sec.*-my.* refused" 2 "does not match v*-sec.*-my.*" -- --release-tag v2.3.0-sec.9
+run_vs "release mode: tag absent at HEAD fails" 1 "expected exactly v2.3.0-sec.9-my.8" -- --release-tag v2.3.0-sec.9-my.8
+G tag -d "$R" > /dev/null
+G tag -s -u "$OTHER" -m "release" "$R"
+run_vs "release mode: release tag signed by another key fails" 1 "release tag $R: signature does not verify" -- --release-tag "$R"
+G tag -d "$R" > /dev/null
+G tag "$R"
+run_vs "release mode: lightweight release tag fails" 1 "is not an annotated tag" -- --release-tag "$R"
+G tag -d "$R" > /dev/null
+# a signed tag object named v2.3.0-sec.9-my.7, stored under refs/tags/$R
+G tag -s -u "$MAINT" -m "release" v2.3.0-sec.9-my.7
+G update-ref "refs/tags/$R" "$(G rev-parse refs/tags/v2.3.0-sec.9-my.7)"
+G tag -d v2.3.0-sec.9-my.7 > /dev/null
+run_vs "release mode: tag object named differently fails" 1 "expected $R" -- --release-tag "$R"
+G tag -d "$R" > /dev/null
+G tag -s -u "$MAINT" -m "release" "$R" "$base_commit"
+run_vs "release mode: release tag on another commit fails" 1 "expected exactly $R" -- --release-tag "$R"
+G tag -d "$R" > /dev/null
 
 at "$base_commit"; own a.txt "Add a" -S"$OTHER"
 run_vs "own commit signed by another key fails" 1 "signature does not verify"

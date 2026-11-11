@@ -4,10 +4,30 @@ Personal builds of the Zephyr daemon by the maintainer; not part of zephyr-backp
 This directory holds the build recipe and checks used by
 `.github/workflows/daemon-release-baseline.yml`.
 
-## What is built
+## When it runs and what is built
 
-The workflow builds the commit that was pushed (`GITHUB_SHA`), not a separate
-checkout. That commit must be the signed zephyr-backports base tag plus own commits:
+`run-identity.py` holds the table of runs this pipeline accepts; anything else fails in
+the first step of every job (and again in every manifest and verifier):
+
+| event | ref | built commit (`MYZ_BUILD_SHA`) | `GITHUB_SHA` |
+|---|---|---|---|
+| `push` | `refs/heads/ci/daemon-release-baseline` | `GITHUB_SHA` | the built commit |
+| `push` | `refs/heads/my/<name>` | `GITHUB_SHA` | the built commit |
+| `pull_request` into `my/<name>` | `refs/pull/<number>/merge` | the pull request's head commit | GitHub's test merge commit, never built |
+
+In every row `GITHUB_WORKFLOW_SHA` equals `GITHUB_SHA`. For a pull request GitHub runs the
+workflow file of its test merge commit; `ci-checkout.sh` proves that this merge commit has
+exactly the parents base and head and the head's tree, so the workflow and scripts that
+run are the head's, and that the base is an ancestor of the head (the pull request lands
+by fast-forward). A pull request from a branch under `my/` or from
+`ci/daemon-release-baseline` is refused, because that branch has its own push run: one
+push starts one run. Pull requests from forks get a read-only token and no secrets; the
+workflow uses none, and `contents: read` is its only permission.
+
+Every job checks out exactly the built commit with `fetch-depth: 1` and `fetch-tags:
+false` (with `fetch-depth: 0` actions/checkout fetches every tag), then `ci-checkout.sh`
+completes the history with `git fetch --no-tags --unshallow` and fails if any tag is in
+the checkout. That commit must be the signed zephyr-backports base tag plus own commits:
 
 - the base tag object, its name, its commit and its signature by the backports key
   (primary fingerprint `FB39 94F0 997C A6F0 43D7  2491 9EFF 03F5 27D2 40A1`) are
@@ -19,8 +39,10 @@ checkout. That commit must be the signed zephyr-backports base tag plus own comm
   `contrib/depends/packages/gtest.mk`, `README.md`, the workflow and this directory;
   a commit changes either source (daemon or that build recipe) or
   tooling/documentation;
-- tags at the head must be signed by the maintainer key; submodules must be at their
-  recorded commits; the checkout must be clean.
+- no tag may point at the head; submodules must be at their recorded commits; the
+  checkout must be clean. (`verify-source.sh --release-tag NAME` is the other mode: it
+  requires exactly that maintainer-signed tag `v*-sec.*-my.*` at the head; the release
+  script uses it on the already built commit, nothing is built from such a checkout.)
 
 Both fingerprints are pinned in the workflow; the key files in `keys/` hold the
 public keys only and must contain exactly the pinned primary key. Signatures are
@@ -30,9 +52,15 @@ as git splits them (`split-signed.sh`); git's own gpg call is not used, so the c
 is the same under Git Bash on Windows as on Linux and macOS.
 
 The version the binary reports follows from the commit, as in
-`cmake/GitVersion.cmake`: `<version>-release` when a tag points at the commit,
-otherwise `<version>-<first 9 hex digits of the commit>`. The workflow derives the
-expected string the same way and compares it with `zephyrd --version`.
+`cmake/GitVersion.cmake`: `<version>-<first 9 hex digits of the commit>`, because no
+build checkout has a tag. (GitVersion.cmake prints `<version>-release` when any tag
+points at the commit; that string is refused by `zephyrd-check.py`, `check-embedded.py`,
+both schemas and both verifiers.) The workflow derives the expected string the same way
+and compares it with `zephyrd --version`. Built first, tagged afterwards: the binaries
+of the push run on the landed head are the released ones, and the release tag is put on
+that commit later without rebuilding anything. To reproduce the published version string,
+build the tagged commit from a checkout without tags (`git clone --no-tags`, or delete
+the tag locally): with the tag present the build would print `<version>-release`.
 
 ## Files
 
@@ -45,16 +73,18 @@ expected string the same way and compares it with `zephyrd --version`.
 | `cross/Dockerfile`, `cross/run-builder.sh`, `cross/build-in-container.sh` | cross builders from the same base image digest and snapshot as `linux/`: Linux AArch64 (`aarch64-linux-gnu`, the snapshot's GCC 9.3 cross compiler with one hash-guarded header fix, see "Other platforms"), macOS x86_64 (`x86_64-apple-darwin`, depends' hash-pinned clang 9.0.0 and Xcode 12.2 SDK) and Windows x86_64 (`x86_64-w64-mingw32`, MinGW-w64 with the posix thread model); target `daemon`, Release |
 | `check-macho.py`, `check-pe.py` | static checks of the macOS Mach-O and the Windows PE binary with fixed expectations (architecture, minimum OS, subsystem, linked libraries); pure Python, nothing is executed |
 | `check-embedded.py` | the expected version string and the four mainnet IP seeds are embedded (used where the binary cannot run on the build machine) |
-| `make-cross-manifest.py`, `manifest-cross.schema.json` | build manifest of a cross build (`myzephyr/daemon-cross-build-manifest/1`); the target fixes the format and binary name |
+| `make-cross-manifest.py`, `manifest-cross.schema.json` | build manifest of a cross build (`myzephyr/daemon-cross-build-manifest/2`); the target fixes the format and binary name |
+| `run-identity.py` | the run-identity table above: `check` as the first step of every job (writes `MYZ_PULL_REQUEST`), and the module the manifest writers and verifiers use |
+| `ci-checkout.sh` | completes a depth-1 checkout without tags, checks the run identity and, for a pull request, the test merge commit; refuses any tag in the checkout; writes the checkout record the manifest cites |
 | `verify-cross-artifact.py` | checks a downloaded cross artifact like `verify-artifact.py` does (whose workflow, source and base checks it reuses), with the verifier's own static and embedded reports |
 | `unit-test-summary.py` | judges a unit-test run: every enabled test executed, no failure or skip, reference count (a different count is "review-required", not a pass) |
 | `verify-source.sh`, `split-signed.sh` | the source checks above; `split-signed.sh` takes the signed payload and the signature from a tag or commit object as git 2.56 does, and refuses objects git would not hand to gpg |
 | `check-elf.sh` | runtime requirements of the Linux x86_64 binary, or with `--arch aarch64` of the Linux AArch64 one (machine, interpreter): no RPATH/RUNPATH, glibc symbol versions at most 2.29, no shared C++ runtime |
-| `make-manifest.py`, `manifest.schema.json` | build manifest: source commit and tags, signed base, workflow run, recipe, builder, packages, ELF requirements, artifact hash |
+| `make-manifest.py`, `manifest.schema.json` | build manifest (`myzephyr/daemon-build-manifest/3`): source commit with `tags_at_head: none` and the fetch mode, signed base, workflow run (with the pull request for a pull-request run), recipe, builder, packages, ELF requirements, artifact hash |
 | `verify-artifact.py` | checks a downloaded release artifact against trusted inputs (see below) |
 | `zephyrd-check.py` | bounded offline-start and default-discovery checks with strict RPC assertions on every sample |
 | `runtime/Dockerfile` | runtime-only Debian 11 arm64 userland (the arm64 manifest of the Linux builder base's index, python3 from the same snapshot) for a second offline start of the AArch64 binary |
-| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made) |
+| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made); `run-identity-selftest.py` (each row of the table and one changed value per case) and `ci-checkout-selftest.sh` (a local origin with tags and merge refs over a file URL) |
 | `keys/zephyr-backports-release.asc` | public key that signs the zephyr-backports tags |
 | `keys/myzephyr-maintainer.asc` | public key that signs the own commits |
 
@@ -92,16 +122,18 @@ values and container engine are invented and say nothing about any real host.
 
 The jobs that use the release artifact verify it in three separate steps:
 
-1. `verify-source.sh` on their own checkout of the pushed commit: signatures of the
-   base tag and of every own commit, history, tags at the head, submodules, clean tree;
+1. `verify-source.sh` on their own checkout of the built commit: signatures of the
+   base tag and of every own commit, history, no tag at the head, submodules, clean tree;
 2. `check-elf.sh` on the downloaded `zephyrd` (static inspection; nothing is executed);
 3. `verify-artifact.py`, which accepts the artifact only if its files and manifest
    agree with those two results, with `zephyrd-check.py expected-version` of the same
    checkout, with the recipe files of that checkout, with the base policy pinned in the
    workflow, and with the job's own run context: `GITHUB_REPOSITORY`, `GITHUB_REF`,
-   `GITHUB_WORKFLOW_REF`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, and `GITHUB_SHA` for
-   `source.commit`, `workflow.sha` and `workflow.workflow_sha`. None of these values is
-   read from the artifact.
+   `GITHUB_WORKFLOW_REF`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, `GITHUB_EVENT_NAME`,
+   `GITHUB_SHA` for `workflow.sha` and `workflow.workflow_sha`, `MYZ_BUILD_SHA` for
+   `source.commit`, and the pull request read from the job's own event payload. That
+   context must itself be a row of the run-identity table. None of these values is read
+   from the artifact.
 
 `verify-artifact.py` checks the layout (regular files only, no symlinks), `SHA256SUMS`
 (exactly `zephyrd`, `manifest.json`, `expected-version.txt`, `source-identity.txt`,
@@ -140,6 +172,9 @@ above the glibc 2.29 that upstream's v2.3.0 Linux daemon needs.
 The inherited build, depends, tests and provenance workflows exclude pushes to
 `ci/daemon-release-baseline`. The dedicated workflow runs this branch's build and
 test gates. Other branches and pull requests keep their existing triggers.
+
+A local replay is a different checkout than CI's: it gets `--local` manifests, which no
+verifier accepts as CI provenance.
 
 ## Other platforms
 

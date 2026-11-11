@@ -4,7 +4,12 @@
   artifact-verify-selftest.py <work-dir>
       fixture mode: the metadata of run 42543200624's release artifact (artifact-fixture/;
       build-logs/toolchain.txt is rebuilt from the manifest), with placeholder bytes instead
-      of the 25 MB binary, plus a tagged variant;
+      of the 25 MB binary. The stored fixture is schema /2; the test converts it in its
+      working copy to schema /3 as make-manifest.py writes it now (no tags list but
+      "tags_at_head": "none", "tags_in_checkout": 0 and the fetch mode; the source identity
+      gets verify-source.sh's two new lines; workflow.pull_request null; the check
+      workflow_identity_allowed). Valid variants: the push to ci/daemon-release-baseline,
+      a push to my/v2.3.0 and a pull request into my/v2.3.0 built at its head commit;
   artifact-verify-selftest.py <work-dir> --artifact DIR -- <verify-artifact.py trusted options>
       real mode: a downloaded artifact and the trusted options its verification uses
       (everything except --artifact and --report).
@@ -12,7 +17,9 @@
 <work-dir> must not exist. Each case gets its own copy of the valid artifact (the binary is
 hard-linked unless the case changes it), changes exactly one thing, re-seals SHA256SUMS
 unless the case is about SHA256SUMS, and must be rejected with exit 1 and a diagnostic
-naming that thing. The valid cases must pass with exit 0. Nothing in an artifact is ever
+naming that thing (usage errors: exit 2). The valid cases must pass with exit 0. The
+run-identity table gets one-variable cases on the trusted side and on the manifest side
+for each row. Nothing in an artifact is ever
 executed; the placeholder is not a program. Exit 0 when every case gives the intended verdict.
 """
 import hashlib
@@ -28,6 +35,8 @@ verifier = os.path.join(tooling, "verify-artifact.py")
 fixture = os.path.join(here, "artifact-fixture")
 SUMMED = ("zephyrd", "manifest.json", "expected-version.txt", "source-identity.txt")
 OTHER = "1111111111111111111111111111111111111111"
+MERGE = "2222222222222222222222222222222222222222"
+BASE_TIP = "8c6a120256b4bd887d6e7167d929d76e3507e0e5"
 
 
 def sha256(path):
@@ -143,7 +152,7 @@ def version_output(d, t):
 def local_build(d, t):
     m = load(d)
     m["workflow"] = {"local_build": True}
-    m["checks"]["workflow_sha_is_source_commit"] = "not-applicable"
+    m["checks"]["workflow_identity_allowed"] = "not-applicable"
     save(d, m)
     return "local_build is not public CI provenance"
 
@@ -288,13 +297,41 @@ def trusted_recipe_changed(d, t):
     return "build.recipe.files"
 
 
-def trusted_tag_at_head(d, t):
-    p = os.path.join(d + "-trusted", "source-identity.txt")
-    lines = read(t["source-identity"]).splitlines()
-    lines.insert(2, f"source_tag v9.9.9-test={OTHER} {t['maintainer-fingerprint']}")
-    write(p, "\n".join(lines) + "\n")
-    t["source-identity"] = p
-    return "source.tags"
+def trusted_identity_edit(old, new, frag):
+    def run(d, t):
+        p = os.path.join(d + "-trusted", "source-identity.txt")
+        text = read(t["source-identity"])
+        assert old in text, old
+        write(p, text.replace(old, new, 1))
+        t["source-identity"] = p
+        return frag
+    return run
+
+
+def trusted_pr(key, value, frag):
+    def run(d, t):
+        pr = json.loads(t["pull-request"])
+        pr[key] = value
+        t["pull-request"] = json.dumps(pr)
+        return frag
+    return run
+
+
+def manifest_pr(key, value, frag):
+    def fn(m, t):
+        m["workflow"]["pull_request"][key] = value
+        return frag
+    return manifest_case(fn)
+
+
+def both_pr(key, value, frag):
+    """Manifest and trusted pull request changed alike: only the table can refuse it."""
+    m_inner, t_inner = manifest_pr(key, value, frag), trusted_pr(key, value, frag)
+
+    def run(d, t):
+        t_inner(d, t)
+        return m_inner(d, t)
+    return run
 
 
 NEGATIVE = [
@@ -329,7 +366,7 @@ NEGATIVE = [
     ("check-version-state-false", m_set(["checks", "expected_version_matches_source_state"], False, "manifest.checks.expected_version_matches_source_state"), True),
     ("check-version-output-false", m_set(["checks", "version_output_matches_expected"], False, "manifest.checks.version_output_matches_expected"), True),
     ("check-elf-report-false", m_set(["checks", "binary_matches_elf_report"], False, "manifest.checks.binary_matches_elf_report"), True),
-    ("check-workflow-sha-false", m_set(["checks", "workflow_sha_is_source_commit"], False, "manifest.checks.workflow_sha_is_source_commit"), True),
+    ("check-workflow-identity-false", m_set(["checks", "workflow_identity_allowed"], False, "manifest.checks.workflow_identity_allowed"), True),
     ("elf-checks-failed", m_set(["runtime_requirements", "elf_checks"], "failed", "runtime_requirements.elf_checks"), True),
     ("rpath-present", m_set(["runtime_requirements", "rpath_runpath"], "(RUNPATH) /src/lib", "runtime_requirements.rpath_runpath"), True),
     ("needed-extra-library", m_set(["runtime_requirements", "needed"], lambda v: v + ["libstdc++.so.6"], "runtime_requirements.needed"), True),
@@ -342,7 +379,10 @@ NEGATIVE = [
     ("name-wrong", m_set(["artifact", "name"], "zephyr-wallet-rpc", "artifact.name"), True),
     ("version-claim-wrong", version_claim, True),
     ("version-output-wrong", version_output, True),
-    ("tag-claimed-without-tag", m_set(["source", "tags"], [{"name": "v9.9.9-test", "object": OTHER, "signer_primary_fingerprint": "31DA39AB43E0CA67F1F3A661BA2AFF22DF8A4A13"}], "-release$"), True),
+    ("tag-claimed-at-head", m_set(["source", "tags_at_head"], "v2.3.0-sec.2-my.1", "manifest.source.tags_at_head"), True),
+    ("tags-in-checkout", m_set(["source", "tags_in_checkout"], 3, "manifest.source.tags_in_checkout"), True),
+    ("fetch-mode-with-tags", m_set(["source", "fetch_mode"], "depth-0-with-tags", "manifest.source.fetch_mode"), True),
+    ("release-version-claimed", manifest_case(lambda m, t: (m["artifact"].__setitem__("expected_version", "2.3.0-release"), "manifest.artifact.expected_version")[1]), True),
     # source and recipe consistency
     ("own-commits-changed", m_set(["source", "own_commits"], lambda v: v[1:], "source.own_commits"), True),
     ("submodule-changed", m_set(["source", "submodules", "external/randomx"], OTHER, "source.submodules"), True),
@@ -375,7 +415,51 @@ NEGATIVE = [
     ("trusted-other-repository", trusted("repository", "someone/myzephyr", "workflow.repository"), False),
     ("trusted-elf-report-failed", trusted_elf_failed, False),
     ("trusted-recipe-changed", trusted_recipe_changed, False),
-    ("trusted-tag-at-head", trusted_tag_at_head, False),
+    ("trusted-tag-at-head", trusted_identity_edit("tags_at_head=none", "tags_at_head=v2.3.0-sec.2-my.1", "trusted identity tags_at_head"), False),
+    ("trusted-tags-in-checkout", trusted_identity_edit("tags_in_checkout=0", "tags_in_checkout=1", "trusted identity tags_in_checkout"), False),
+    # run-identity table, push row of ci/daemon-release-baseline: one trusted variable, artifact unchanged
+    ("table-trusted-event-pull-request", trusted("event-name", "pull_request", "trusted run identity not in the table"), False),
+    ("table-trusted-event-dispatch", trusted("event-name", "workflow_dispatch", "trusted run identity not in the table"), False),
+    ("table-trusted-ref-main", trusted("ref", "refs/heads/main", "trusted run identity not in the table"), False),
+    ("table-trusted-ref-tag", trusted("ref", "refs/tags/v2.3.0-sec.2-my.1", "trusted run identity not in the table"), False),
+    ("table-trusted-github-sha-not-built", trusted("github-sha", OTHER, "trusted run identity not in the table"), False),
+    ("table-trusted-pr-on-push", trusted("pull-request", json.dumps({"number": 7, "base_ref": "my/v2.3.0", "base_sha": BASE_TIP,
+        "head_sha": "e66283f3812e8ebac7911ea55146267effc24150", "head_ref": "pr/x", "head_repository": "loki-notfound/myzephyr"}),
+        "trusted run identity not in the table"), False),
+    # the same row, manifest side
+    ("table-manifest-event-pull-request", m_set(["workflow", "event_name"], "pull_request", "manifest.workflow.pull_request: type null"), True),
+    ("table-manifest-pr-on-push", m_set(["workflow", "pull_request"], {"number": 7, "base_ref": "my/v2.3.0", "base_sha": BASE_TIP,
+        "head_sha": "e66283f3812e8ebac7911ea55146267effc24150", "head_ref": "pr/x", "head_repository": "loki-notfound/myzephyr"},
+        "workflow.pull_request"), True),
+]
+
+# rows my/<name> and pull_request: (variant, name, mutation, seal)
+VARIANT_NEGATIVE = [
+    ("my", "my-trusted-ref-no-name", trusted("ref", "refs/heads/my", "trusted run identity not in the table"), False),
+    ("my", "my-trusted-ref-mine", trusted("ref", "refs/heads/mine/v2.3.0", "trusted run identity not in the table"), False),
+    ("my", "my-manifest-ref-other-branch", m_set(["workflow", "ref"], "refs/heads/my/v2.4.0", "workflow.ref"), True),
+    ("pr", "pr-trusted-head-not-built", trusted_pr("head_sha", OTHER, "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-base-master", trusted_pr("base_ref", "master", "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-base-security", trusted_pr("base_ref", "security/v2.3.0", "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-head-under-my", trusted_pr("head_ref", "my/v2.3.0-candidate", "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-head-ci-branch", trusted_pr("head_ref", "ci/daemon-release-baseline", "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-number-mismatch", trusted_pr("number", 8, "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-merge-is-built", trusted("github-sha", "e66283f3812e8ebac7911ea55146267effc24150", "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-ref-pull-head", trusted("ref", "refs/pull/7/head", "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-no-pr-fields", trusted("pull-request", "none", "trusted run identity not in the table"), False),
+    ("pr", "pr-manifest-number", manifest_pr("number", 8, "workflow.pull_request"), True),
+    ("pr", "pr-manifest-head", manifest_pr("head_sha", OTHER, "workflow.pull_request"), True),
+    ("pr", "pr-manifest-sha-is-built", m_set(["workflow", "sha"], "e66283f3812e8ebac7911ea55146267effc24150", "workflow.sha"), True),
+    ("pr", "pr-manifest-event-push", m_set(["workflow", "event_name"], "push", "manifest.workflow.pull_request: type object"), True),
+    # both sides changed alike, valid for the schema: the table itself must refuse the combination
+    ("pr", "pr-both-head-under-my", both_pr("head_ref", "my/candidate", "manifest run identity with its source commit is a row of the table"), True),
+]
+
+# usage errors (exit 2): trusted inputs the verifier refuses before looking at the artifact
+USAGE = [
+    ("usage-expected-version-release", "expected-version", "2.3.0-release", "never accepted"),
+    ("usage-pull-request-not-json", "pull-request", "{number: 7}", "--pull-request"),
+    ("usage-github-sha-short", "github-sha", "e66283f38", "--github-sha"),
 ]
 
 
@@ -404,6 +488,7 @@ def fixture_base(work):
     size, digest = os.path.getsize(z), sha256(z)
     m = load(base)
     m["artifact"]["size"], m["artifact"]["sha256"] = size, digest
+    convert_to_schema_3(m)
     # the recipe in this checkout is the trusted one; follow it if it changed after the fixture run
     recipe = os.path.join(tooling, "linux")
     files = {n: sha256(os.path.join(recipe, n)) for n in ("Dockerfile", "run-builder.sh", "build-in-container.sh")}
@@ -412,6 +497,11 @@ def fixture_base(work):
         m["build"]["recipe"] = {"files": files, "sha256": hashlib.sha256(
             "".join(f"{files[n]}  {n}\n" for n in sorted(files)).encode()).hexdigest()}
     save(base, m)
+    ident = os.path.join(base, "source-identity.txt")
+    lines = read(ident).splitlines()
+    at = next(i for i, l in enumerate(lines) if l.startswith("source_commit_time=")) + 1
+    lines[at:at] = ["tags_at_head=none", "tags_in_checkout=0"]
+    write(ident, "\n".join(lines) + "\n")
     elf = os.path.join(base, "elf-report.txt")
     kv_set(elf, "elf_size", str(size))
     kv_set(elf, "elf_sha256", digest)
@@ -421,33 +511,43 @@ def fixture_base(work):
     shutil.copyfile(elf, os.path.join(trusted_dir, "elf-report.txt"))
     shutil.copyfile(os.path.join(base, "source-identity.txt"), os.path.join(trusted_dir, "source-identity.txt"))
     ctx.update({"source-identity": os.path.join(trusted_dir, "source-identity.txt"),
-                "elf-report": os.path.join(trusted_dir, "elf-report.txt"), "recipe-dir": recipe})
+                "elf-report": os.path.join(trusted_dir, "elf-report.txt"), "recipe-dir": recipe,
+                "event-name": "push", "github-sha": ctx["expected-commit"], "pull-request": "none"})
     return base, ctx
 
 
-def tagged_variant(work, base, t):
-    """A valid manifest for a commit with a signed tag at it (synthetic tag object, no real tag)."""
-    d = os.path.join(work, "tagged")
+def convert_to_schema_3(m):
+    """The stored schema /2 manifest as make-manifest.py writes it now (no tag existed in that run)."""
+    assert m["schema"] == "myzephyr/daemon-build-manifest/2" and m["source"]["tags"] == []
+    m["schema"] = "myzephyr/daemon-build-manifest/3"
+    src = m["source"]
+    del src["tags"]
+    src.update({"tags_at_head": "none", "tags_in_checkout": 0, "fetch_mode": "depth-1-no-tags+unshallow-no-tags"})
+    m["workflow"]["pull_request"] = None
+    m["checks"]["workflow_identity_allowed"] = m["checks"].pop("workflow_sha_is_source_commit")
+
+
+def identity_variant(work, base, t, name, ref, event, sha, pr):
+    """A valid artifact of the same build under another row of the run-identity table."""
+    d = os.path.join(work, name)
     copy_artifact(base, d)
-    tt = dict(t)
-    tdir = d + "-trusted"
-    os.makedirs(tdir)
-    lines = read(t["source-identity"]).splitlines()
-    lines.insert(2, f"source_tag v2.3.0-sec.2-my.0-fixture={OTHER} {t['maintainer-fingerprint']}")
-    write(os.path.join(tdir, "source-identity.txt"), "\n".join(lines) + "\n")
-    shutil.copyfile(os.path.join(tdir, "source-identity.txt"), os.path.join(d, "source-identity.txt"))
-    version = t["expected-version"].rsplit("-", 1)[0] + "-release"
     m = load(d)
-    m["source"]["tags"] = [{"name": "v2.3.0-sec.2-my.0-fixture", "object": OTHER,
-                            "signer_primary_fingerprint": t["maintainer-fingerprint"]}]
-    m["artifact"]["expected_version"] = version
-    m["artifact"]["version_output"] = m["artifact"]["version_output"].replace(t["expected-version"], version)
+    wf = m["workflow"]
+    wf.update({"ref": ref, "event_name": event, "sha": sha, "workflow_sha": sha, "pull_request": pr,
+               "workflow_ref": wf["workflow_ref"].rsplit("@", 1)[0] + "@" + ref})
     save(d, m)
-    write(os.path.join(d, "expected-version.txt"), version + "\n")
-    write(os.path.join(d, "version.txt"), m["artifact"]["version_output"] + "\n")
     reseal(d)
-    tt.update({"source-identity": os.path.join(tdir, "source-identity.txt"), "expected-version": version})
+    tt = dict(t, ref=ref, **{"event-name": event, "github-sha": sha, "workflow-ref": wf["workflow_ref"],
+                             "pull-request": "none" if pr is None else json.dumps(pr)})
     return d, tt
+
+
+def variants(work, base, t):
+    commit = t["expected-commit"]
+    pr = {"number": 7, "base_ref": "my/v2.3.0", "base_sha": BASE_TIP, "head_sha": commit,
+          "head_ref": "pr/v2.3.0-sec.2-my.1", "head_repository": "loki-notfound/myzephyr"}
+    return {"my": identity_variant(work, base, t, "valid-my", "refs/heads/my/v2.3.0", "push", commit, None),
+            "pr": identity_variant(work, base, t, "valid-pr", "refs/pull/7/merge", "pull_request", MERGE, pr)}
 
 
 def main():
@@ -487,10 +587,12 @@ def main():
 
     rc, out = verify(base, dict(t0), os.path.join(work, "base.json"))
     record("valid" if real else "valid-fixture", 0, rc, out, "checks passed")
+    var = {}
     if not real:
-        d, tt = tagged_variant(work, base, t0)
-        rc, out = verify(d, tt, os.path.join(work, "tagged.json"))
-        record("valid-tagged-fixture", 0, rc, out, "checks passed")
+        var = variants(work, base, t0)
+        for vname, (d, tt) in var.items():
+            rc, out = verify(d, tt, os.path.join(work, f"valid-{vname}.json"))
+            record(f"valid-{vname}-fixture", 0, rc, out, "checks passed")
     if ok:
         for name, mutate, seal in NEGATIVE:
             d = os.path.join(work, name)
@@ -502,6 +604,20 @@ def main():
                 reseal(d)
             rc, out = verify(d, t, os.path.join(work, name + ".json"))
             record(name, 1, rc, out, frag)
+        for vname, name, mutate, seal in VARIANT_NEGATIVE if var else []:
+            vbase, vt = var[vname]
+            d = os.path.join(work, name)
+            copy_artifact(vbase, d)
+            os.makedirs(d + "-trusted")
+            t = dict(vt)
+            frag = mutate(d, t)
+            if seal:
+                reseal(d)
+            rc, out = verify(d, t, os.path.join(work, name + ".json"))
+            record(name, 1, rc, out, frag)
+        for name, key, value, frag in USAGE:
+            rc, out = verify(base, dict(t0, **{key: value}), os.path.join(work, name + ".json"))
+            record(name, 2, rc, out, frag)
     else:
         print("the valid artifact is rejected; the single-variable cases are not meaningful and were not run")
     with open(os.path.join(work, "results.json"), "w") as f:

@@ -7,7 +7,15 @@
 #                    --base-tag NAME --base-ref REF --base-commit SHA --base-tag-object SHA
 #                    --base-key FILE --base-fingerprint FPR
 #                    --maintainer-key FILE --maintainer-fingerprint FPR
-#                    [--base-repository URL] --out FILE
+#                    [--base-repository URL] [--release-tag NAME] --out FILE
+#
+# Two modes for the tags at the head:
+#   build    (default) no tag may point at HEAD. cmake/GitVersion.cmake prints
+#            "release" instead of the commit when any tag points at HEAD, so a build
+#            checkout must have none; the CI checkouts fetch no tags at all.
+#   release  --release-tag NAME: exactly the tag NAME points at HEAD, and it is the
+#            release tag of the already built commit (contrib/myzephyr/release/
+#            draft-release.sh uses this mode; nothing is built from such a checkout).
 #
 # Checks, in this order, each one fatal (exit 1; usage errors exit 2):
 #   base     REF holds exactly the annotated tag object SHA, whose header names tag
@@ -22,9 +30,11 @@
 #            (regular files, no symlinks or submodule pointers). A commit changes
 #            either source (daemon source under src/, or the one build recipe
 #            contrib/depends/packages/gtest.mk) or CI/documentation files, never both.
-#   tags     every tag in refs/tags that points at HEAD makes the build report a
-#            "release" version; each one must be annotated and signed by the
-#            maintainer key.
+#   tags     build mode: no tag in refs/tags points at HEAD (the number of tags in
+#            the checkout is recorded). Release mode: the only tag at HEAD is
+#            refs/tags/NAME; NAME matches v*-sec.*-my.* (letters, digits, ".", "_",
+#            "-" only); it is an annotated tag object whose header names tag NAME,
+#            type commit and HEAD, signed by the maintainer key.
 #   tree     every submodule is at the commit recorded in the superproject, and the
 #            checkout, including submodules and ignored files, is clean.
 #
@@ -61,7 +71,7 @@ usage() { echo "usage: see the header of $0" >&2; exit 2; }
 fail() { echo "verify-source: $*" >&2; exit 1; }
 
 co= expected_head= base_tag= base_ref= base_commit= base_tag_object= base_key= base_fpr=
-maint_key= maint_fpr= base_repo= out=
+maint_key= maint_fpr= base_repo= out= release_tag=
 while [ $# -gt 0 ]; do
   [ $# -ge 2 ] || usage
   case "$1" in
@@ -69,7 +79,7 @@ while [ $# -gt 0 ]; do
     --base-tag) base_tag=$2 ;; --base-ref) base_ref=$2 ;; --base-commit) base_commit=$2 ;;
     --base-tag-object) base_tag_object=$2 ;; --base-key) base_key=$2 ;; --base-fingerprint) base_fpr=$2 ;;
     --maintainer-key) maint_key=$2 ;; --maintainer-fingerprint) maint_fpr=$2 ;;
-    --base-repository) base_repo=$2 ;; --out) out=$2 ;;
+    --base-repository) base_repo=$2 ;; --out) out=$2 ;; --release-tag) release_tag=$2 ;;
     *) usage ;;
   esac
   shift 2
@@ -83,6 +93,10 @@ done
 for v in base_fpr maint_fpr; do
   [[ "${!v}" =~ ^[0-9A-F]{40}$ ]] || { echo "verify-source: ${v//_/-} must be a 40-digit uppercase fingerprint" >&2; exit 2; }
 done
+if [ -n "$release_tag" ]; then
+  [[ "$release_tag" =~ ^[A-Za-z0-9._-]+$ && "$release_tag" == v*-sec.*-my.* ]] \
+    || { echo "verify-source: --release-tag $release_tag does not match v*-sec.*-my.*" >&2; exit 2; }
+fi
 for f in "$base_key" "$maint_key"; do test -r "$f" || { echo "verify-source: key file $f not readable" >&2; exit 2; }; done
 git -C "$co" rev-parse --git-dir > /dev/null 2>&1 || { echo "verify-source: $co is not a git checkout" >&2; exit 2; }
 
@@ -208,17 +222,28 @@ for c in "${commits[@]}"; do
   prev=$c
 done
 
-# tags at HEAD (they turn the version into "release")
+# tags at HEAD (any of them turns the version into "release")
+tags_at_head=()
+while read -r t; do [ -z "$t" ] || tags_at_head+=("$t"); done < <(g tag -l --points-at HEAD)
+tags_in_checkout=$(g for-each-ref --format='%(refname)' refs/tags | wc -l | tr -d ' ')
 tag_lines=()
-while read -r t; do
-  [ -n "$t" ] || continue
-  tobj=$(g rev-parse "refs/tags/$t")
-  [ "$(g cat-file -t "$tobj")" = tag ] || fail "tag $t at HEAD is not an annotated tag"
-  verify_object tag "$tobj" "$maint_home" "tag $t at HEAD"
+if [ -z "$release_tag" ]; then
+  [ "${#tags_at_head[@]}" = 0 ] || fail "tag(s) at HEAD: ${tags_at_head[*]}; a build checkout must have no tag at HEAD (the version would read \"release\")"
+  tag_lines+=("tags_at_head=none" "tags_in_checkout=$tags_in_checkout")
+else
+  [ "${#tags_at_head[@]}" = 1 ] && [ "${tags_at_head[0]}" = "$release_tag" ] \
+    || fail "release mode: the tags at HEAD are '${tags_at_head[*]-}', expected exactly $release_tag"
+  tobj=$(g rev-parse --verify --quiet "refs/tags/$release_tag") || fail "refs/tags/$release_tag not present"
+  [ "$(g cat-file -t "$tobj")" = tag ] || fail "tag $release_tag is not an annotated tag"
+  thdr=$(g cat-file tag "$tobj" | sed '/^$/q')
+  [ "$(sed -n 's/^tag //p' <<< "$thdr")" = "$release_tag" ] || fail "tag object $tobj is named $(sed -n 's/^tag //p' <<< "$thdr"), expected $release_tag"
+  [ "$(sed -n 's/^type //p' <<< "$thdr")" = commit ] || fail "tag $release_tag does not point at a commit"
+  [ "$(sed -n 's/^object //p' <<< "$thdr")" = "$head" ] || fail "tag $release_tag points at $(sed -n 's/^object //p' <<< "$thdr"), expected HEAD $head"
+  verify_object tag "$tobj" "$maint_home" "release tag $release_tag"
   st=$(cat "$vstatus")
-  check_sig "$st" "$maint_fpr" "tag $t" > /dev/null
-  tag_lines+=("source_tag $t=$tobj $maint_fpr")
-done < <(g tag -l --points-at HEAD)
+  check_sig "$st" "$maint_fpr" "release tag $release_tag" > /dev/null
+  tag_lines+=("tags_at_head=$release_tag" "release_tag $release_tag=$tobj $maint_fpr")
+fi
 
 # tree
 subs=$(g submodule status --recursive)
@@ -242,4 +267,4 @@ dirty=$(g status --porcelain --ignored --ignore-submodules=none)
   # "|| echo", not "&& echo": with no submodule the loop must not end with status 1 (pipefail)
   while read -r sha path _; do [ -z "$path" ] || echo "submodule $path=${sha#[ ]}"; done <<< "$subs"
 } | sed '/^$/d' > "$out"
-echo "verify-source: ok (HEAD $head, ${#commits[@]} own commit(s) above $base_tag = $base_commit, tags at HEAD: ${#tag_lines[@]})"
+echo "verify-source: ok (HEAD $head, ${#commits[@]} own commit(s) above $base_tag = $base_commit, tags at HEAD: ${release_tag:-none})"

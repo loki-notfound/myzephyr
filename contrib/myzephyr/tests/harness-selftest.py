@@ -55,28 +55,30 @@ def record(name, ok, detail):
 
 # 1. assertion fixtures
 def good(**over):
-    r = {"status": "OK", "offline": True, "version": "2.3.0-release", "nettype": "mainnet",
+    r = {"status": "OK", "offline": True, "version": "2.3.0-4f6b84e81", "nettype": "mainnet",
          "mainnet": True, "height": 1, "outgoing_connections_count": 0}
     r.update(over)
     return {"jsonrpc": "2.0", "id": "0", "result": r}
 
 
 fixtures = [
-    ("valid offline answer", good(), "2.3.0-release", True, True),
+    ("valid offline answer", good(), "2.3.0-4f6b84e81", True, True),
     ("valid untagged version", good(version="2.3.0-8c6a12025"), "2.3.0-8c6a12025", True, True),
-    ("status BUSY", good(status="BUSY"), "2.3.0-release", True, False),
-    ("offline false when offline expected", good(offline=False), "2.3.0-release", True, False),
-    ("offline missing", {"result": {k: v for k, v in good()["result"].items() if k != "offline"}}, "2.3.0-release", True, False),
-    ("wrong version suffix", good(version="2.3.0-8c6a12025"), "2.3.0-release", True, False),
-    ("malformed version", good(version="v2.3.0"), "2.3.0-release", True, False),
-    ("testnet", good(nettype="testnet", mainnet=False), "2.3.0-release", True, False),
-    ("height zero", good(height=0), "2.3.0-release", True, False),
-    ("height as string", good(height="1"), "2.3.0-release", True, False),
-    ("outgoing peers while offline", good(outgoing_connections_count=2), "2.3.0-release", True, False),
-    ("RPC error object", {"jsonrpc": "2.0", "id": "0", "error": {"code": -1, "message": "x"}}, "2.3.0-release", True, False),
-    ("result not an object", {"result": "OK"}, "2.3.0-release", True, False),
-    ("not an object", ["OK"], "2.3.0-release", True, False),
-    ("valid online answer", good(offline=False, outgoing_connections_count=3), "2.3.0-release", False, True),
+    ("status BUSY", good(status="BUSY"), "2.3.0-4f6b84e81", True, False),
+    ("offline false when offline expected", good(offline=False), "2.3.0-4f6b84e81", True, False),
+    ("offline missing", {"result": {k: v for k, v in good()["result"].items() if k != "offline"}}, "2.3.0-4f6b84e81", True, False),
+    ("wrong version suffix", good(version="2.3.0-8c6a12025"), "2.3.0-4f6b84e81", True, False),
+    ("malformed version", good(version="v2.3.0"), "2.3.0-4f6b84e81", True, False),
+    ("testnet", good(nettype="testnet", mainnet=False), "2.3.0-4f6b84e81", True, False),
+    ("height zero", good(height=0), "2.3.0-4f6b84e81", True, False),
+    ("height as string", good(height="1"), "2.3.0-4f6b84e81", True, False),
+    ("outgoing peers while offline", good(outgoing_connections_count=2), "2.3.0-4f6b84e81", True, False),
+    ("RPC error object", {"jsonrpc": "2.0", "id": "0", "error": {"code": -1, "message": "x"}}, "2.3.0-4f6b84e81", True, False),
+    ("result not an object", {"result": "OK"}, "2.3.0-4f6b84e81", True, False),
+    ("not an object", ["OK"], "2.3.0-4f6b84e81", True, False),
+    ("valid online answer", good(offline=False, outgoing_connections_count=3), "2.3.0-4f6b84e81", False, True),
+    ("daemon reports a release version", good(version="2.3.0-release"), "2.3.0-4f6b84e81", True, False),
+    ("release version even when it is the expected string", good(version="2.3.0-release"), "2.3.0-release", True, False),
 ]
 for name, info, ver, offline, want_ok in fixtures:
     errs = zc.check_info(info, ver, offline)
@@ -111,7 +113,7 @@ samples = [
     ("later height missing", {"result": {k: v for k, v in online()["result"].items() if k != "height"}}, "invalid"),
 ]
 for name, info, want in samples:
-    kind, detail = zc.classify_sample(info, "2.3.0-release")
+    kind, detail = zc.classify_sample(info, "2.3.0-4f6b84e81")
     record(f"sample: {name}", kind == want, f"{kind}: {detail}")
 
 HS = {"result": {"status": "OK", "connections": [
@@ -142,7 +144,7 @@ def discovery_in_memory(name, infos, conns, want_pass, expect=None):
         return item
 
     args = types.SimpleNamespace(mode="discovery", ports=[1, 2, 3], request_timeout=1.0, poll=0.01,
-                                 stop_on_pass=True, expect_version="2.3.0-release")
+                                 stop_on_pass=True, expect_version="2.3.0-4f6b84e81")
     run_obj = zc.Run(args)
     run_obj.proc, run_obj.polls, run_obj.t0 = FakeProc(), io.StringIO(), time.monotonic()
     saved_rpc, saved_err = zc.rpc, sys.stderr
@@ -207,7 +209,7 @@ def run(name, mode, scenario, want_exit, max_s, binary=stub, extra=(), log=None,
     data = log + "-data"
     env = dict(os.environ, STUB_SCENARIO=scenario, **(env_extra or {}))
     cmd = [sys.executable, "-I", check_py, mode, "--zephyrd", binary, "--data-dir", data,
-           "--log-dir", log, "--expect-version", "2.3.0-release", "--ports", PORTS,
+           "--log-dir", log, "--expect-version", "2.3.0-4f6b84e81", "--ports", PORTS,
            "--ready-timeout", "8", "--stop-timeout", "3", "--request-timeout", "1", *extra]
     t = time.monotonic()
     p = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=120)
@@ -260,6 +262,31 @@ for scen, kind in (("later-busy-height", "busy"), ("later-rpc-error-height", "rp
     run(f"stub {scen} not counted", "discovery", scen, 1, 25, extra=("--limit", "6", "--poll", "0.5", "--stop-on-pass"),
         want_checks={"invalid_sample": False, "outgoing_handshake": True, "height_max": 1,
                      "samples": lambda s, kind=kind: isinstance(s, dict) and s.get(kind, 0) >= 1})
+
+# "release" is refused as an expected version, and expected-version refuses a checkout with a tag at HEAD
+p = subprocess.run([sys.executable, "-I", check_py, "offline", "--zephyrd", stub, "--data-dir", os.path.join(work, "rel-data"),
+                    "--log-dir", os.path.join(work, "rel-log"), "--expect-version", "2.3.0-release", "--ports", PORTS],
+                   capture_output=True, text=True, timeout=60)
+record("--expect-version 2.3.0-release refused before start", p.returncode == 2 and "never accepted" in p.stderr
+       and not os.path.exists(os.path.join(work, "rel-log")), f"exit {p.returncode}: {p.stderr.strip()[-160:]}")
+gitrepo = os.path.join(work, "version-repo")
+os.makedirs(os.path.join(gitrepo, "src"))
+with open(os.path.join(gitrepo, "src", "version.cpp.in"), "w") as f:
+    f.write('#define DEF_MONERO_VERSION "2.3.0"\n')
+genv = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+def git(*args):
+    return subprocess.run(["git", "-C", gitrepo, "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+                           "-c", "tag.gpgsign=false", "-c", "user.name=selftest", "-c", "user.email=selftest@example.invalid",
+                           *args], env=genv, capture_output=True, text=True, check=True).stdout.strip()
+git("init", "-q"); git("add", "src"); git("commit", "-q", "-m", "fixture")
+head9 = git("rev-parse", "--short=9", "HEAD")[:9]
+p = subprocess.run([sys.executable, "-I", check_py, "expected-version", "--checkout", gitrepo], capture_output=True, text=True)
+record("expected-version of an untagged checkout is <number>-<sha9>", p.returncode == 0 and p.stdout.strip() == f"2.3.0-{head9}",
+       f"exit {p.returncode}: {p.stdout.strip()} {p.stderr.strip()[-120:]}")
+git("tag", "v-fixture")
+p = subprocess.run([sys.executable, "-I", check_py, "expected-version", "--checkout", gitrepo], capture_output=True, text=True)
+record("expected-version refuses a checkout with a tag at HEAD", p.returncode == 2 and "never builds or accepts" in p.stderr,
+       f"exit {p.returncode}: {p.stdout.strip()} {p.stderr.strip()[-160:]}")
 
 p = run("missing binary refused", "offline", "good", 2, 5, binary=os.path.join(work, "no-such-zephyrd"))
 record("missing binary: nothing created", not os.path.exists(os.path.join(work, "missing-binary-refused")), "")

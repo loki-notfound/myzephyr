@@ -1,14 +1,26 @@
-# Build and test zephyrd for Linux x86_64 from the pushed head of this branch.
+# Build, test and package zephyrd for Linux x86_64, Linux AArch64, macOS x86_64 and
+# Windows x86_64 from one commit.
 #
-# Every job checks out the commit that triggered the run (GITHUB_SHA) and nothing
-# else. The two compiling jobs use separate checkouts (src-release, src-tests) with
-# full history and submodules, fetch the signed zephyr-backports base tag into a
-# ref outside refs/tags, and run contrib/myzephyr/verify-source.sh before building:
-# base tag object and signature (pinned primary fingerprint), HEAD = GITHUB_SHA,
-# base ancestry, every own commit above the base (no merges, "Origin: myzephyr",
-# maintainer signature with pinned primary fingerprint, allowed paths only), signed
-# tags at HEAD, submodule pins and a clean tree. The expected version follows from
-# the commit and its tags, as in cmake/GitVersion.cmake; nothing overrides it.
+# Runs (contrib/myzephyr/run-identity.py holds the table; anything else fails in the
+# first step of every job):
+#   push to ci/daemon-release-baseline or to my/<name>   builds GITHUB_SHA
+#   pull request into my/<name>                          builds the pull request's head
+#                                                        commit, never GitHub's test merge
+# MYZ_BUILD_SHA (below) is that commit. Every job checks out exactly it with fetch-depth 1
+# and no tags, then contrib/myzephyr/ci-checkout.sh checks the run identity, completes the
+# history with "git fetch --no-tags --unshallow", proves for a pull request that the test
+# merge commit (whose workflow file GitHub runs) has the head's tree and the parents base
+# and head, and fails if any tag is in the checkout. No build depends on a tag:
+# cmake/GitVersion.cmake prints "release" when a tag points at HEAD, and no checkout here
+# has one, so every binary reports <version>-<9 hex of MYZ_BUILD_SHA>; "release" is
+# refused by every checker. A pull request from a branch under my/ or from
+# ci/daemon-release-baseline is refused: that branch already has its own push run.
+# The compiling jobs use separate checkouts (src-release, src-tests, src-cross), fetch the
+# signed zephyr-backports base tag into a ref outside refs/tags, and run
+# contrib/myzephyr/verify-source.sh before building: base tag object and signature
+# (pinned primary fingerprint), HEAD = MYZ_BUILD_SHA, base ancestry, every own commit above
+# the base (no merges, "Origin: myzephyr", maintainer signature with pinned primary
+# fingerprint, allowed paths only), no tag at HEAD, submodule pins and a clean tree.
 #
 # Gates, each its own job, none skipped or allowed to fail silently:
 #   tooling-selftest  self-tests of the start-check harness, the unit-test judge, the
@@ -39,8 +51,12 @@ name: daemon-release-baseline
 
 on:
   push:
-    branches: [ci/daemon-release-baseline]
+    branches: [ci/daemon-release-baseline, "my/**"]
+  pull_request:
+    branches: ["my/**"]
 
+# The only permission in this workflow. Pull requests from forks get a read-only token and
+# no secrets; this workflow uses no secret.
 permissions:
   contents: read
 
@@ -61,6 +77,8 @@ env:
   MAINTAINER_FINGERPRINT: 31DA39AB43E0CA67F1F3A661BA2AFF22DF8A4A13
   EXPECTED_UNIT_TESTS_PASSED: "1006"
   RETENTION_DAYS: "14"
+  # the built commit: the pushed commit, or the head commit of a pull request
+  MYZ_BUILD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   tooling-selftest:
@@ -68,19 +86,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - name: Check out the pushed commit
+      - name: Check out the built commit (depth 1, no tags)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.MYZ_BUILD_SHA }}
           path: tooling
+          fetch-depth: 1
+          fetch-tags: false
           persist-credentials: false
-      - name: Assert event and commit
+      - name: Check the run identity, complete the history without tags
+        run: mkdir -p "$RUNNER_TEMP/out" && bash tooling/contrib/myzephyr/ci-checkout.sh tooling "$RUNNER_TEMP/out/checkout-record.txt"
+      - name: Run-identity table self-test (synthetic identities, one changed value per case)
+        run: python3 -I tooling/contrib/myzephyr/tests/run-identity-selftest.py "$RUNNER_TEMP/out/run-identity"
+      - name: Checkout completion self-test (local origin with tags and merge refs, file URL)
+        if: always()
         run: |
-          test "$GITHUB_EVENT_NAME" = push
-          test "$GITHUB_REF" = refs/heads/ci/daemon-release-baseline
-          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
-          test "$(git -C tooling rev-parse HEAD)" = "$GITHUB_SHA"
+          bash tooling/contrib/myzephyr/tests/ci-checkout-selftest.sh "$RUNNER_TEMP/ci-checkout" \
+            | tee "$RUNNER_TEMP/out/ci-checkout-selftest.txt"
       - name: Harness self-test
+        if: always()
         run: python3 -I tooling/contrib/myzephyr/tests/harness-selftest.py "$RUNNER_TEMP/out/harness"
       - name: Unit-test judge self-test (fixed fixtures, not daemon results)
         if: always()
@@ -111,7 +135,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: tooling-selftest-${{ github.sha }}
+          name: tooling-selftest-${{ env.MYZ_BUILD_SHA }}
           path: ${{ runner.temp }}/out
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: warn
@@ -121,21 +145,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
-      - name: Check out the pushed commit with history and submodules
+      - name: Check out the built commit with submodules (depth 1, no tags)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.MYZ_BUILD_SHA }}
           path: src-release
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: false
           submodules: recursive
           persist-credentials: false
       - name: Verify the source (base tag, own commits, head, tree)
         run: |
-          test "$GITHUB_EVENT_NAME" = push
-          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          bash src-release/contrib/myzephyr/ci-checkout.sh src-release "$out/checkout-record.txt"
           git -C src-release fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
-          src-release/contrib/myzephyr/verify-source.sh --checkout src-release --expected-head "$GITHUB_SHA" \
+          src-release/contrib/myzephyr/verify-source.sh --checkout src-release --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
             --base-key src-release/contrib/myzephyr/keys/zephyr-backports-release.asc --base-fingerprint "$BASE_FINGERPRINT" \
@@ -169,14 +193,14 @@ jobs:
             --expected-version "$out/expected-version.txt" --builder-logs "$out/build-logs" \
             --elf-report "$out/elf-report.txt" --binary "$out/zephyrd" --version-output "$out/version.txt" \
             --build-dir src-release/build/release --recipe-dir src-release/contrib/myzephyr/linux \
-            --out "$out/manifest.json"
+            --checkout-record "$out/checkout-record.txt" --out "$out/manifest.json"
           ( cd "$out" && sha256sum zephyrd manifest.json expected-version.txt source-identity.txt > SHA256SUMS )
           cat "$out/SHA256SUMS"
       - name: Upload release artifact and logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: zephyrd-linux-x86_64-${{ github.sha }}
+          name: zephyrd-linux-x86_64-${{ env.MYZ_BUILD_SHA }}
           path: ${{ runner.temp }}/out
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: error
@@ -186,21 +210,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     steps:
-      - name: Check out the pushed commit with history and submodules
+      - name: Check out the built commit with submodules (depth 1, no tags)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.MYZ_BUILD_SHA }}
           path: src-tests
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: false
           submodules: recursive
           persist-credentials: false
       - name: Verify the source (base tag, own commits, head, tree)
         run: |
-          test "$GITHUB_EVENT_NAME" = push
-          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          bash src-tests/contrib/myzephyr/ci-checkout.sh src-tests "$out/checkout-record.txt"
           git -C src-tests fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
-          src-tests/contrib/myzephyr/verify-source.sh --checkout src-tests --expected-head "$GITHUB_SHA" \
+          src-tests/contrib/myzephyr/verify-source.sh --checkout src-tests --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
             --base-key src-tests/contrib/myzephyr/keys/zephyr-backports-release.asc --base-fingerprint "$BASE_FINGERPRINT" \
@@ -217,7 +241,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: unit-tests-linux-x86_64-${{ github.sha }}
+          name: unit-tests-linux-x86_64-${{ env.MYZ_BUILD_SHA }}
           path: ${{ runner.temp }}/out
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: error
@@ -232,26 +256,26 @@ jobs:
       matrix:
         userland: [ubuntu-24.04-host, debian-11-builder-image]
     steps:
-      - name: Check out the pushed commit with history and submodules
+      - name: Check out the built commit with submodules (depth 1, no tags)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.MYZ_BUILD_SHA }}
           path: tooling
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: false
           submodules: recursive
           persist-credentials: false
       - name: Download release artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: zephyrd-linux-x86_64-${{ github.sha }}
+          name: zephyrd-linux-x86_64-${{ env.MYZ_BUILD_SHA }}
           path: art
       - name: Verify the source independently (base tag, own commits, head, tree)
         run: |
-          test "$GITHUB_EVENT_NAME" = push
-          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           v="$RUNNER_TEMP/out/artifact-verification"; mkdir -p "$v"
+          bash tooling/contrib/myzephyr/ci-checkout.sh tooling "$v/checkout-record.txt"
           git -C tooling fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
-          tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$GITHUB_SHA" \
+          tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
             --base-key tooling/contrib/myzephyr/keys/zephyr-backports-release.asc --base-fingerprint "$BASE_FINGERPRINT" \
@@ -264,9 +288,10 @@ jobs:
       - name: Verify the artifact against this run and the independent results
         run: |
           v="$RUNNER_TEMP/out/artifact-verification"
-          printf '%s\n' --expected-commit "$GITHUB_SHA" --expected-version "$(cat "$v/expected-version.txt")" \
+          printf '%s\n' --expected-commit "$MYZ_BUILD_SHA" --expected-version "$(cat "$v/expected-version.txt")" \
             --repository "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --workflow-ref "$GITHUB_WORKFLOW_REF" \
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --server-url "$GITHUB_SERVER_URL" \
+            --event-name "$GITHUB_EVENT_NAME" --github-sha "$GITHUB_SHA" --pull-request "$MYZ_PULL_REQUEST" \
             --producer-job release-build --base-repository "$BASE_REPOSITORY_URL" --base-tag "$BASE_TAG" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-commit "$BASE_COMMIT" --base-fingerprint "$BASE_FINGERPRINT" \
             --maintainer-fingerprint "$MAINTAINER_FINGERPRINT" --source-identity "$v/source-identity.txt" \
@@ -302,7 +327,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: runtime-offline-${{ matrix.userland }}-${{ github.sha }}
+          name: runtime-offline-${{ matrix.userland }}-${{ env.MYZ_BUILD_SHA }}
           path: ${{ runner.temp }}/out
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: error
@@ -313,26 +338,26 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Check out the pushed commit with history and submodules
+      - name: Check out the built commit with submodules (depth 1, no tags)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.MYZ_BUILD_SHA }}
           path: tooling
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: false
           submodules: recursive
           persist-credentials: false
       - name: Download release artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: zephyrd-linux-x86_64-${{ github.sha }}
+          name: zephyrd-linux-x86_64-${{ env.MYZ_BUILD_SHA }}
           path: art
       - name: Verify the source independently (base tag, own commits, head, tree)
         run: |
-          test "$GITHUB_EVENT_NAME" = push
-          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           v="$RUNNER_TEMP/out/artifact-verification"; mkdir -p "$v"
+          bash tooling/contrib/myzephyr/ci-checkout.sh tooling "$v/checkout-record.txt"
           git -C tooling fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
-          tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$GITHUB_SHA" \
+          tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
             --base-key tooling/contrib/myzephyr/keys/zephyr-backports-release.asc --base-fingerprint "$BASE_FINGERPRINT" \
@@ -345,9 +370,10 @@ jobs:
       - name: Verify the artifact against this run and the independent results
         run: |
           v="$RUNNER_TEMP/out/artifact-verification"
-          printf '%s\n' --expected-commit "$GITHUB_SHA" --expected-version "$(cat "$v/expected-version.txt")" \
+          printf '%s\n' --expected-commit "$MYZ_BUILD_SHA" --expected-version "$(cat "$v/expected-version.txt")" \
             --repository "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --workflow-ref "$GITHUB_WORKFLOW_REF" \
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --server-url "$GITHUB_SERVER_URL" \
+            --event-name "$GITHUB_EVENT_NAME" --github-sha "$GITHUB_SHA" --pull-request "$MYZ_PULL_REQUEST" \
             --producer-job release-build --base-repository "$BASE_REPOSITORY_URL" --base-tag "$BASE_TAG" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-commit "$BASE_COMMIT" --base-fingerprint "$BASE_FINGERPRINT" \
             --maintainer-fingerprint "$MAINTAINER_FINGERPRINT" --source-identity "$v/source-identity.txt" \
@@ -366,7 +392,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: bootstrap-default-${{ github.sha }}
+          name: bootstrap-default-${{ env.MYZ_BUILD_SHA }}
           path: ${{ runner.temp }}/out
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: error
@@ -382,21 +408,21 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
     steps:
-      - name: Check out the pushed commit with history and submodules
+      - name: Check out the built commit with submodules (depth 1, no tags)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.MYZ_BUILD_SHA }}
           path: src-cross
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: false
           submodules: recursive
           persist-credentials: false
       - name: Verify the source (base tag, own commits, head, tree)
         run: |
-          test "$GITHUB_EVENT_NAME" = push
-          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          bash src-cross/contrib/myzephyr/ci-checkout.sh src-cross "$out/checkout-record.txt"
           git -C src-cross fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
-          src-cross/contrib/myzephyr/verify-source.sh --checkout src-cross --expected-head "$GITHUB_SHA" \
+          src-cross/contrib/myzephyr/verify-source.sh --checkout src-cross --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
             --base-key src-cross/contrib/myzephyr/keys/zephyr-backports-release.asc --base-fingerprint "$BASE_FINGERPRINT" \
@@ -429,14 +455,14 @@ jobs:
             --builder-logs "$out/build-logs" --static-report "$out/static-report.txt" \
             --embedded-report "$out/embedded-report.txt" --binary "$out/$bin" \
             --build-dir "src-cross/build/release-$TARGET" --recipe-dir src-cross/contrib/myzephyr/cross \
-            --out "$out/manifest.json"
+            --checkout-record "$out/checkout-record.txt" --out "$out/manifest.json"
           ( cd "$out" && sha256sum "$bin" manifest.json expected-version.txt source-identity.txt > SHA256SUMS )
           cat "$out/SHA256SUMS"
       - name: Upload cross-built artifact and logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: zephyrd-${{ matrix.target }}-${{ github.sha }}
+          name: zephyrd-${{ matrix.target }}-${{ env.MYZ_BUILD_SHA }}
           path: ${{ runner.temp }}/out
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: error
@@ -477,12 +503,13 @@ jobs:
           git config --global core.autocrlf false
           git config --global core.eol lf
           git config --global core.longpaths true
-      - name: Check out the pushed commit with history and submodules
+      - name: Check out the built commit with submodules (depth 1, no tags)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.MYZ_BUILD_SHA }}
           path: tooling
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: false
           submodules: recursive
           persist-credentials: false
       - name: Record and require the tools this job uses (fails if one is missing)
@@ -510,15 +537,14 @@ jobs:
       - name: Download the cross-built artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: zephyrd-${{ matrix.target }}-${{ github.sha }}
+          name: zephyrd-${{ matrix.target }}-${{ env.MYZ_BUILD_SHA }}
           path: art
       - name: Verify the source independently (base tag, own commits, head, tree)
         run: |
-          test "$GITHUB_EVENT_NAME" = push
-          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           v=out/artifact-verification
+          bash tooling/contrib/myzephyr/ci-checkout.sh tooling "$v/checkout-record.txt"
           git -C tooling fetch --no-tags "$BASE_REPOSITORY_URL" "+refs/tags/$BASE_TAG:refs/myzephyr-base/$BASE_TAG"
-          bash tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$GITHUB_SHA" \
+          bash tooling/contrib/myzephyr/verify-source.sh --checkout tooling --expected-head "$MYZ_BUILD_SHA" \
             --base-tag "$BASE_TAG" --base-ref "refs/myzephyr-base/$BASE_TAG" --base-commit "$BASE_COMMIT" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-repository "$BASE_REPOSITORY_URL" \
             --base-key tooling/contrib/myzephyr/keys/zephyr-backports-release.asc --base-fingerprint "$BASE_FINGERPRINT" \
@@ -539,9 +565,10 @@ jobs:
         run: |
           v=out/artifact-verification
           "$PY" -I tooling/contrib/myzephyr/verify-cross-artifact.py --target "$TARGET" --artifact art \
-            --expected-commit "$GITHUB_SHA" --expected-version "$(tr -d '\r\n' < "$v/expected-version.txt")" \
+            --expected-commit "$MYZ_BUILD_SHA" --expected-version "$(tr -d '\r\n' < "$v/expected-version.txt")" \
             --repository "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --workflow-ref "$GITHUB_WORKFLOW_REF" \
             --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --server-url "$GITHUB_SERVER_URL" \
+            --event-name "$GITHUB_EVENT_NAME" --github-sha "$GITHUB_SHA" --pull-request "$MYZ_PULL_REQUEST" \
             --producer-job cross-build --base-repository "$BASE_REPOSITORY_URL" --base-tag "$BASE_TAG" \
             --base-tag-object "$BASE_TAG_OBJECT" --base-commit "$BASE_COMMIT" --base-fingerprint "$BASE_FINGERPRINT" \
             --maintainer-fingerprint "$MAINTAINER_FINGERPRINT" --source-identity "$v/source-identity.txt" \
@@ -586,7 +613,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: native-runtime-${{ matrix.target }}-${{ github.sha }}
+          name: native-runtime-${{ matrix.target }}-${{ env.MYZ_BUILD_SHA }}
           path: out
           retention-days: ${{ env.RETENTION_DAYS }}
           if-no-files-found: error

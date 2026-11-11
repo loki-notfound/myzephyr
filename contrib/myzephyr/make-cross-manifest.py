@@ -3,7 +3,7 @@
 
   make-cross-manifest.py --target T --source-identity F --expected-version F --builder-logs D
                          --static-report F --embedded-report F --binary F --build-dir D
-                         --recipe-dir D --out F [--local]
+                         --recipe-dir D --out F (--checkout-record F | --local)
 
 T is aarch64-linux-gnu (ELF, check-elf.sh --arch aarch64), x86_64-apple-darwin (Mach-O,
 check-macho.py) or x86_64-w64-mingw32 (PE, check-pe.py). --embedded-report is
@@ -16,7 +16,7 @@ Consistency checks, recorded under "checks"; any failure exits 1 after writing:
   embedded_version_matches_expected      the only embedded version string is the expected one
   binary_matches_static_report           the static report describes this binary and passed
   binary_matches_embedded_report         the embedded report describes this binary and passed
-  workflow_sha_is_source_commit          as in make-manifest.py
+  workflow_identity_allowed              as in make-manifest.py
 """
 import argparse
 import importlib.util
@@ -32,7 +32,7 @@ spec = importlib.util.spec_from_file_location("make_manifest", os.path.join(here
 mm = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mm)
 
-SCHEMA = "myzephyr/daemon-cross-build-manifest/1"
+SCHEMA = "myzephyr/daemon-cross-build-manifest/2"
 TARGETS = {"aarch64-linux-gnu": ("elf", "zephyrd"), "x86_64-apple-darwin": ("macho", "zephyrd"),
            "x86_64-w64-mingw32": ("pe", "zephyrd.exe")}
 REPORT_KEYS = {"elf": ("elf_sha256", "elf_checks"), "macho": ("macho_sha256", "macho_checks"),
@@ -45,6 +45,7 @@ def main():
                  "embedded-report", "binary", "build-dir", "recipe-dir", "out"):
         p.add_argument(f"--{name}", required=True)
     p.add_argument("--local", action="store_true", help="a local replay, not a GitHub Actions run")
+    p.add_argument("--checkout-record", help="ci-checkout.sh's record (required outside --local)")
     a = p.parse_args()
     if a.target not in TARGETS:
         sys.exit(f"make-cross-manifest: unknown target {a.target}")
@@ -62,22 +63,12 @@ def main():
     packages = [l for l in open(os.path.join(logs, "builder-packages.tsv")) if l.strip()]
     expected = open(a.expected_version).read().strip()
     commit = src["source_commit"]
-    tags = [{"name": n, "object": v.split()[0], "signer_primary_fingerprint": v.split()[1]}
-            for n, v in sorted(groups.get("source_tag", {}).items())]
+    state = mm.source_state(src, a.checkout_record, a.local)
     own = [{"commit": c, "paths": paths.split()} for c, paths in groups.get("own_commit", {}).items()]
     if len(own) != int(src["own_commit_count"]):
         sys.exit("make-cross-manifest: own_commit lines do not match own_commit_count")
-    if a.local:
-        workflow, wf_check = {"local_build": True}, "not-applicable"
-    else:
-        missing = [v for v in mm.GITHUB_ENV.values() if not os.environ.get(v)]
-        if missing:
-            sys.exit(f"make-cross-manifest: not a GitHub Actions environment (missing {missing}); use --local")
-        workflow = {k: os.environ[v] for k, v in mm.GITHUB_ENV.items()}
-        wf_check = workflow["sha"] == commit and workflow["workflow_sha"] == commit
-
-    m = re.fullmatch(r"(\d+\.\d+\.\d+)-(release|[0-9a-f]{9})", expected)
-    version_state_ok = bool(m) and (m.group(2) == "release" if tags else m.group(2) == commit[:9])
+    workflow, wf_check = mm.workflow_record(commit, a.local)
+    version_state_ok = mm.version_state_ok(expected, commit, state)
     digest = mm.sha256(a.binary)
     sha_key, checks_key = REPORT_KEYS[fmt]
     versions = emb.get("embedded_versions", "").split()
@@ -86,13 +77,13 @@ def main():
         "embedded_version_matches_expected": versions == [expected] and emb.get("embedded_expected_version") == expected,
         "binary_matches_static_report": static.get(sha_key) == digest and static.get(checks_key) == "passed",
         "binary_matches_embedded_report": emb.get("embedded_sha256") == digest and emb.get("embedded_checks") == "passed",
-        "workflow_sha_is_source_commit": wf_check,
+        "workflow_identity_allowed": wf_check,
     }
     manifest = {
         "schema": SCHEMA,
         "artifact": {"name": name, "size": os.path.getsize(a.binary), "sha256": digest,
                      "expected_version": expected, "target": a.target, "format": fmt},
-        "source": {"commit": commit, "commit_time": int(src["source_commit_time"]), "tags": tags,
+        "source": {"commit": commit, "commit_time": int(src["source_commit_time"]), **state,
                    "own_commits": own, "submodules": groups.get("submodule", {})},
         "base": {"repository": src.get("base_repository") or None, "tag": src["base_tag"],
                  "tag_object": src["base_tag_object"], "commit": src["base_commit"],

@@ -3,16 +3,18 @@
 
   verify-artifact.py --artifact DIR --expected-commit SHA --expected-version V
       --repository OWNER/NAME --ref REF --workflow-ref REF --run-id N --run-attempt N
+      --event-name E --github-sha SHA --pull-request none|JSON
       [--server-url URL] [--producer-job ID]
       --base-repository URL --base-tag NAME --base-tag-object SHA --base-commit SHA
       --base-fingerprint FPR --maintainer-fingerprint FPR
       --source-identity FILE --elf-report FILE --recipe-dir DIR [--report FILE]
 
 Every value after --artifact comes from the verifier, never from the artifact: the CI
-context of the consuming job (GITHUB_SHA, GITHUB_REPOSITORY, GITHUB_REF,
-GITHUB_WORKFLOW_REF, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT), the pinned base policy of
-the workflow, and files the verifier made itself from its own checkout and the
-downloaded binary:
+context of the consuming job (GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF,
+GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_EVENT_NAME, GITHUB_SHA and MYZ_PULL_REQUEST, which
+run-identity.py read from that job's own event payload; --expected-commit is the built
+commit, MYZ_BUILD_SHA), the pinned base policy of the workflow, and files the verifier made
+itself from its own checkout and the downloaded binary:
   --source-identity  output of verify-source.sh (signatures, base, own commits, tags,
                      submodules) run on the verifier's checkout of the expected commit;
   --elf-report       output of check-elf.sh run by the verifier on the downloaded zephyrd;
@@ -31,18 +33,23 @@ Checks (each failure is reported; exit 1 if any fails, 2 on a usage error):
   schema    manifest.json is strict JSON (no duplicate keys, no NaN) and valid against
             manifest.schema.json next to this script (schema id
             myzephyr/daemon-build-manifest/2); unknown schema keywords are an error;
-  workflow  a GitHub Actions push run (a local_build manifest is not CI provenance):
-            repository, ref, workflow_ref, run_id, run_attempt, server_url and the
-            producing job equal the trusted values; sha and workflow_sha equal the
-            expected commit;
-  source    the commit, commit time, tags at it, own commits with their paths and
-            submodule pins equal the trusted source identity; source-identity.txt in
-            the artifact is byte-identical to it;
+  workflow  the trusted run identity is a row of run-identity.py's table (push to
+            ci/daemon-release-baseline or my/<name>, or a pull request into my/<name>
+            built at its head commit); anything else fails. The manifest is from a GitHub
+            Actions run (a local_build manifest is not CI provenance): repository, ref,
+            workflow_ref, run_id, run_attempt, server_url, event_name, the pull request
+            fields and the producing job equal the trusted values; sha and workflow_sha
+            equal the trusted GITHUB_SHA (for a pull request the test merge commit, which
+            is never built);
+  source    the commit (the built commit), commit time, own commits with their paths and
+            submodule pins equal the trusted source identity; no tag at the commit
+            ("tags_at_head": "none") and none in the checkout, as the trusted identity
+            says; source-identity.txt in the artifact is byte-identical to it;
   base      repository, tag, tag object, commit and signer equal the pinned policy and
             the trusted identity (including the signing subkey found by verify-source);
   version   expected-version.txt, the manifest and the trusted expected version agree;
-            "-release" exactly when tags are at the commit, else "-" + 9 hex digits of
-            it; version.txt and the manifest's version output agree and end with it;
+            it is <number>-<first 9 hex digits of the commit>; "release" is refused;
+            version.txt and the manifest's version output agree and end with it;
   binary    name zephyrd, target x86_64-unknown-linux-gnu, actual size and hash;
   elf       manifest runtime requirements and the artifact's elf-report.txt equal the
             verifier's own report; elf_checks passed, the pinned interpreter, only the
@@ -56,13 +63,20 @@ On success the expected version is printed. --report writes all results as JSON.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import stat
 import sys
 
-SCHEMA_ID = "myzephyr/daemon-build-manifest/2"
+sys.dont_write_bytecode = True
+_spec = importlib.util.spec_from_file_location(
+    "run_identity", os.path.join(os.path.dirname(os.path.abspath(__file__)), "run-identity.py"))
+ri = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ri)
+
+SCHEMA_ID = "myzephyr/daemon-build-manifest/3"
 SUMMED = ("zephyrd", "manifest.json", "expected-version.txt", "source-identity.txt")
 REQUIRED_FILES = ("version.txt", "elf-report.txt", "build-logs/builder-packages.tsv",
                   "build-logs/builder-apt-state.txt", "build-logs/image.txt",
@@ -81,6 +95,7 @@ ELF_FIELDS = {"interpreter": "elf_interpreter", "rpath_runpath": "elf_rpath_runp
               "build_id": "elf_build_id"}
 SHA1 = re.compile(r"[0-9a-f]{40}")
 FPR = re.compile(r"[0-9A-F]{40}")
+EXPECTED_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{9}")
 
 
 class Usage(Exception):
@@ -355,18 +370,28 @@ class Verifier:
         return self.check("schema", not errs, f"manifest valid against {self.SCHEMA_ID}")
 
     def provenance(self):
-        """workflow, source and base checks, shared by every target. Returns (flat, groups, tags)
+        """workflow, source and base checks, shared by every target. Returns (flat, groups)
         of the trusted source identity, or None when the manifest is not CI provenance."""
         a, m, d = self.a, self.m, self.d
         commit = a.expected_commit
+        trusted_ctx = {"event_name": a.event_name, "ref": a.ref, "sha": a.github_sha, "workflow_sha": a.github_sha,
+                       "workflow_ref": a.workflow_ref, "repository": a.repository, "built_commit": commit,
+                       "pull_request": a.pull_request_obj}
+        ctx_errs = ri.errors(trusted_ctx)
+        for e in ctx_errs:
+            self.check("workflow", False, f"trusted run identity not in the table: {e}")
+        self.check("workflow", not ctx_errs, f"trusted run identity is a row of the table ({a.event_name} on {a.ref})")
         wf = m["workflow"]
         if not self.check("workflow", "local_build" not in wf,
                           "manifest is from a CI run (local_build is not public CI provenance)"):
             return None
         for key, want in (("repository", a.repository), ("ref", a.ref), ("workflow_ref", a.workflow_ref),
                           ("run_id", a.run_id), ("run_attempt", a.run_attempt), ("server_url", a.server_url),
-                          ("job", a.producer_job), ("event_name", "push"), ("sha", commit), ("workflow_sha", commit)):
+                          ("job", a.producer_job), ("event_name", a.event_name), ("sha", a.github_sha),
+                          ("workflow_sha", a.github_sha), ("pull_request", a.pull_request_obj)):
             self.eq("workflow", f"workflow.{key}", wf[key], want)
+        self.check("workflow", not ri.errors(dict(wf, built_commit=m["source"]["commit"])),
+                   "manifest run identity with its source commit is a row of the table")
 
         trusted_text = read_text(a.source_identity)
         try:
@@ -380,9 +405,12 @@ class Verifier:
         src = m["source"]
         self.eq("source", "source.commit", src["commit"], commit)
         self.eq("source", "source.commit_time", src["commit_time"], int(flat["source_commit_time"]))
-        tags = [{"name": n, "object": v.split()[0], "signer_primary_fingerprint": v.split()[1]}
-                for n, v in sorted(groups.get("source_tag", {}).items())]
-        self.eq("source", "source.tags", src["tags"], tags)
+        self.eq("source", "trusted identity tags_at_head", flat.get("tags_at_head"), "none")
+        self.eq("source", "source.tags_at_head (trusted identity)", src["tags_at_head"], flat.get("tags_at_head"))
+        self.eq("source", "trusted identity tags_in_checkout", flat.get("tags_in_checkout"), "0")
+        self.eq("source", "source.tags_in_checkout (trusted identity)", src["tags_in_checkout"],
+                int(flat["tags_in_checkout"]) if flat.get("tags_in_checkout", "").isdigit() else None)
+        self.check("source", "release_tag" not in groups, "trusted identity is a build checkout (no release tag)")
         own = [{"commit": c, "paths": p.split()} for c, p in groups.get("own_commit", {}).items()]
         self.check("source", len(own) == int(flat["own_commit_count"]), "trusted own_commit lines match own_commit_count")
         self.eq("source", "source.own_commits", src["own_commits"], own)
@@ -398,7 +426,16 @@ class Verifier:
         self.eq("base", "own_commit_signer_primary_fingerprint (pinned)", m["own_commit_signer_primary_fingerprint"],
                 a.maintainer_fingerprint)
         self.eq("base", "trusted identity maintainer_primary (pinned)", flat["maintainer_primary"], a.maintainer_fingerprint)
-        return flat, groups, tags
+        return flat, groups
+
+    def version_checks(self, art):
+        a, d, commit = self.a, self.d, self.a.expected_commit
+        ev_text = read_text(os.path.join(d, "expected-version.txt"))
+        self.check("version", re.fullmatch(r"\S+\n?", ev_text), "expected-version.txt holds one value")
+        self.eq("version", "expected-version.txt", ev_text.strip(), a.expected_version)
+        self.eq("version", "artifact.expected_version", art["expected_version"], a.expected_version)
+        self.check("version", EXPECTED_VERSION.fullmatch(a.expected_version) and a.expected_version.endswith("-" + commit[:9]),
+                   f"expected version {a.expected_version} is <number>-{commit[:9]} (never release)")
 
     def semantics(self):
         a, m, d = self.a, self.m, self.d
@@ -406,16 +443,10 @@ class Verifier:
         prov = self.provenance()
         if prov is None:
             return
-        flat, groups, tags = prov
+        flat, groups = prov
 
         art = m["artifact"]
-        ev_text = read_text(os.path.join(d, "expected-version.txt"))
-        self.check("version", re.fullmatch(r"\S+\n?", ev_text), "expected-version.txt holds one value")
-        self.eq("version", "expected-version.txt", ev_text.strip(), a.expected_version)
-        self.eq("version", "artifact.expected_version", art["expected_version"], a.expected_version)
-        suffix = "release" if tags else commit[:9]
-        self.check("version", a.expected_version.endswith("-" + suffix),
-                   f"expected version {a.expected_version} ends with -{suffix} ({'tags' if tags else 'no tag'} at the commit)")
+        self.version_checks(art)
         vo = art["version_output"]
         self.check("version", "\n" not in vo and vo.startswith("Zephyr '") and vo.endswith(f"(v{a.expected_version})"),
                    f"artifact.version_output {vo!r} reports v{a.expected_version}")
@@ -494,10 +525,30 @@ class Verifier:
         return not self.failed()
 
 
+def check_common_options(a):
+    """Usage checks shared with verify-cross-artifact.py; sets a.pull_request_obj."""
+    for name in ("expected_commit", "github_sha", "base_tag_object", "base_commit"):
+        if not SHA1.fullmatch(getattr(a, name)):
+            raise Usage(f"--{name.replace('_', '-')} must be 40 lowercase hex digits")
+    for name in ("base_fingerprint", "maintainer_fingerprint"):
+        if not FPR.fullmatch(getattr(a, name)):
+            raise Usage(f"--{name.replace('_', '-')} must be a 40-digit uppercase fingerprint")
+    for name in ("run_id", "run_attempt"):
+        if not re.fullmatch(r"[1-9][0-9]*", getattr(a, name)):
+            raise Usage(f"--{name.replace('_', '-')} must be a positive number")
+    if not EXPECTED_VERSION.fullmatch(a.expected_version):
+        raise Usage("--expected-version must look like 2.3.0-<9 hex digits> (\"release\" is never accepted)")
+    try:
+        a.pull_request_obj = ri.parse_pull_request(a.pull_request)
+    except ValueError as e:
+        raise Usage(f"--pull-request: {e}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     for name in ("artifact", "expected-commit", "expected-version", "repository", "ref", "workflow-ref",
-                 "run-id", "run-attempt", "base-repository", "base-tag", "base-tag-object", "base-commit",
+                 "run-id", "run-attempt", "event-name", "github-sha", "pull-request",
+                 "base-repository", "base-tag", "base-tag-object", "base-commit",
                  "base-fingerprint", "maintainer-fingerprint", "source-identity", "elf-report", "recipe-dir"):
         p.add_argument(f"--{name}", required=True)
     p.add_argument("--server-url", default="https://github.com")
@@ -506,17 +557,7 @@ def main():
     a = p.parse_args()
     v = Verifier(a)
     try:
-        for name in ("expected_commit", "base_tag_object", "base_commit"):
-            if not SHA1.fullmatch(getattr(a, name)):
-                raise Usage(f"--{name.replace('_', '-')} must be 40 lowercase hex digits")
-        for name in ("base_fingerprint", "maintainer_fingerprint"):
-            if not FPR.fullmatch(getattr(a, name)):
-                raise Usage(f"--{name.replace('_', '-')} must be a 40-digit uppercase fingerprint")
-        for name in ("run_id", "run_attempt"):
-            if not re.fullmatch(r"[1-9][0-9]*", getattr(a, name)):
-                raise Usage(f"--{name.replace('_', '-')} must be a positive number")
-        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-(release|[0-9a-f]{9})", a.expected_version):
-            raise Usage("--expected-version must look like 2.3.0-<9 hex digits> or 2.3.0-release")
+        check_common_options(a)
         for f in (a.source_identity, a.elf_report):
             if not os.path.isfile(f):
                 raise Usage(f"{f} is not a file")

@@ -4,8 +4,9 @@
   check-embedded.py <binary> <expected-version> <report-file>
 
 Fails (exit 1) unless the binary contains, as NUL-terminated byte strings:
-  - the expected version "<number>-release" or "<number>-<sha9>" (what --version prints
-    inside "(v...)"), and no other "2.3.0-<suffix>" version string of that form;
+  - the expected version "<number>-<sha9>" (what --version prints inside "(v...)"; an
+    expected "<number>-release" is refused), and no other version string of the form
+    "<number>-release" or "<number>-<sha9>";
   - each mainnet seed of src/p2p/net_node.inl: 142.93.255.216:17766, 142.93.98.116:17766,
     24.199.101.125:17766, 85.215.93.176:17766.
 Used where the binary cannot be executed on the build machine (cross builds); the native
@@ -23,8 +24,8 @@ def main():
     if len(sys.argv) != 4:
         sys.exit("usage: check-embedded.py <binary> <expected-version> <report-file>")
     path, expected, report = sys.argv[1:]
-    if not re.fullmatch(r"\d+\.\d+\.\d+-(release|[0-9a-f]{9})", expected):
-        sys.exit(f"check-embedded: expected version {expected!r} has not the form <number>-release|<sha9>")
+    if not re.fullmatch(r"\d+\.\d+\.\d+-[0-9a-f]{9}", expected):
+        sys.exit(f"check-embedded: expected version {expected!r} has not the form <number>-<sha9> (\"release\" is never accepted)")
     d = open(path, "rb").read()
     problems = []
     versions = sorted({m.group(1).decode() for m in VERSION_RE.finditer(d)})

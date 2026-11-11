@@ -13,9 +13,10 @@ Modes
   manual-peer as discovery, but with one --add-exclusive-node, --out-peers 1 and
               --in-peers 0. A diagnostic of that peer, never a default-bootstrap result.
   expected-version
-              print the version string a build of a source checkout reports:
-              "<number>-release" when a tag points at HEAD, else "<number>-<sha9>"
-              (cmake/GitVersion.cmake).
+              print the version string a build of a source checkout reports,
+              "<number>-<sha9>" (cmake/GitVersion.cmake). A checkout with a tag at
+              HEAD is refused: GitVersion.cmake would print "<number>-release", and
+              this pipeline builds and checks only checkouts without a tag at HEAD.
 
 Every launch uses loopback listeners, --no-igd, --non-interactive, an empty explicit
 config file, and new data and log directories (existing ones are refused). Only the
@@ -55,7 +56,7 @@ IS_WINDOWS = os.name == "nt"
 OWN_SIGNALS = [s for s in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK") if hasattr(signal, s)
                and (s != "SIGBREAK" or IS_WINDOWS)]
 HANDSHAKE_STATES = {"synchronizing", "standby", "normal", "idle"}
-VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-(release|[0-9a-f]{9})$")
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+-[0-9a-f]{9}$")   # "release" is never accepted
 # failed requests: refused/reset connections, timeouts, HTTP errors, non-JSON bodies
 REQUEST_ERRORS = (OSError, urllib.error.URLError, ValueError, http.client.HTTPException)
 # loopback requests never go through a proxy (see the header)
@@ -95,7 +96,7 @@ def check_info(info, expect_version, expect_offline, nettype="mainnet"):
         errs.append(f"offline {res.get('offline')!r}, expected {expect_offline}")
     ver = res.get("version")
     if not isinstance(ver, str) or not VERSION_RE.match(ver):
-        errs.append(f"version {ver!r} has not the form <number>-release or <number>-<sha9>")
+        errs.append(f"version {ver!r} has not the form <number>-<sha9>")
     elif ver != expect_version:
         errs.append(f"version {ver!r}, expected {expect_version!r}")
     if res.get("nettype") != nettype:
@@ -454,7 +455,7 @@ def run_daemon_mode(a):
     if busy:
         usage_error(f"port(s) {busy} on 127.0.0.1 already in use; nothing started")
     if not VERSION_RE.match(a.expect_version):
-        usage_error(f"--expect-version {a.expect_version!r} is not <number>-release or <number>-<sha9>")
+        usage_error(f"--expect-version {a.expect_version!r} is not <number>-<sha9> (\"release\" is never accepted)")
     if a.mode == "manual-peer" and not re.match(r"^[A-Za-z0-9.-]+:\d{1,5}$", a.exclusive_node or ""):
         usage_error("manual-peer needs --exclusive-node host:port")
 
@@ -516,7 +517,8 @@ def expected_version(checkout):
     tags = subprocess.run(["git", "-C", checkout, "tag", "-l", "--points-at", "HEAD"],
                           check=True, capture_output=True, text=True).stdout.split()
     if tags:
-        return f"{m.group(1)}-release"
+        usage_error(f"tag(s) at HEAD of {checkout}: {' '.join(tags)}; the build would report "
+                    f"{m.group(1)}-release, which this pipeline never builds or accepts")
     sha = subprocess.run(["git", "-C", checkout, "rev-parse", "--short=9", "HEAD"],
                          check=True, capture_output=True, text=True).stdout.strip()
     return f"{m.group(1)}-{sha[:9]}"

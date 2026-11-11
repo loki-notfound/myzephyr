@@ -1,18 +1,31 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "myzephyr/daemon-build-manifest/2",
+  "$id": "myzephyr/daemon-build-manifest/3",
   "title": "myzephyr daemon build manifest",
-  "description": "source is the compiled commit and the tags at it; base is the signed zephyr-backports tag it descends from; workflow is the run that built it.",
+  "description": "source is the compiled commit (no tag at it, fetched without tags); base is the signed zephyr-backports tag it descends from; workflow is the run that built it, one row of run-identity.py's table.",
   "type": "object",
   "required": ["schema", "artifact", "source", "base", "own_commit_signer_primary_fingerprint", "workflow", "builder", "build", "runtime_requirements", "checks"],
   "additionalProperties": false,
   "$defs": {
     "sha1": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "fingerprint": {"type": "string", "pattern": "^[0-9A-F]{40}$"}
+    "fingerprint": {"type": "string", "pattern": "^[0-9A-F]{40}$"},
+    "pull_request": {
+      "type": "object",
+      "required": ["number", "base_ref", "base_sha", "head_sha", "head_ref", "head_repository"],
+      "additionalProperties": false,
+      "properties": {
+        "number": {"type": "integer", "minimum": 1},
+        "base_ref": {"type": "string", "pattern": "^my/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"},
+        "base_sha": {"$ref": "#/$defs/sha1"},
+        "head_sha": {"$ref": "#/$defs/sha1"},
+        "head_ref": {"type": "string", "minLength": 1},
+        "head_repository": {"type": "string", "minLength": 1}
+      }
+    }
   },
   "properties": {
-    "schema": {"const": "myzephyr/daemon-build-manifest/2"},
+    "schema": {"const": "myzephyr/daemon-build-manifest/3"},
     "artifact": {
       "type": "object",
       "required": ["name", "size", "sha256", "version_output", "expected_version", "target"],
@@ -22,30 +35,20 @@
         "size": {"type": "integer", "minimum": 1},
         "sha256": {"$ref": "#/$defs/sha256"},
         "version_output": {"type": "string"},
-        "expected_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-(release|[0-9a-f]{9})$"},
+        "expected_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{9}$"},
         "target": {"const": "x86_64-unknown-linux-gnu"}
       }
     },
     "source": {
       "type": "object",
-      "required": ["commit", "commit_time", "tags", "own_commits", "submodules"],
+      "required": ["commit", "commit_time", "tags_at_head", "tags_in_checkout", "fetch_mode", "own_commits", "submodules"],
       "additionalProperties": false,
       "properties": {
         "commit": {"$ref": "#/$defs/sha1"},
         "commit_time": {"type": "integer"},
-        "tags": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["name", "object", "signer_primary_fingerprint"],
-            "additionalProperties": false,
-            "properties": {
-              "name": {"type": "string", "minLength": 1},
-              "object": {"$ref": "#/$defs/sha1"},
-              "signer_primary_fingerprint": {"$ref": "#/$defs/fingerprint"}
-            }
-          }
-        },
+        "tags_at_head": {"const": "none"},
+        "tags_in_checkout": {"const": 0},
+        "fetch_mode": {"enum": ["depth-1-no-tags+unshallow-no-tags", "local"]},
         "own_commits": {
           "type": "array",
           "minItems": 1,
@@ -80,27 +83,30 @@
       "oneOf": [
         {
           "type": "object",
-          "required": ["repository", "ref", "sha", "workflow_ref", "workflow_sha", "event_name", "run_id", "run_number", "run_attempt", "job", "server_url"],
+          "required": ["repository", "ref", "sha", "workflow_ref", "workflow_sha", "event_name", "run_id", "run_number", "run_attempt", "job", "server_url", "pull_request"],
           "additionalProperties": false,
           "properties": {
             "repository": {"type": "string", "minLength": 1},
-            "ref": {"type": "string", "pattern": "^refs/heads/"},
+            "ref": {"type": "string", "pattern": "^refs/(heads/ci/daemon-release-baseline|heads/my/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*|pull/[0-9]+/merge)$"},
             "sha": {"$ref": "#/$defs/sha1"},
             "workflow_ref": {"type": "string", "minLength": 1},
             "workflow_sha": {"$ref": "#/$defs/sha1"},
-            "event_name": {"const": "push"},
+            "event_name": {"enum": ["push", "pull_request"]},
             "run_id": {"type": "string", "pattern": "^[0-9]+$"},
             "run_number": {"type": "string", "pattern": "^[0-9]+$"},
             "run_attempt": {"type": "string", "pattern": "^[0-9]+$"},
             "job": {"type": "string", "minLength": 1},
-            "server_url": {"type": "string"}
+            "server_url": {"type": "string"},
+            "pull_request": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/pull_request"}]}
           }
         },
         {
           "type": "object",
           "required": ["local_build"],
           "additionalProperties": false,
-          "properties": {"local_build": {"const": true}}
+          "properties": {
+            "local_build": {"const": true}
+          }
         }
       ]
     },
@@ -129,11 +135,7 @@
           "required": ["files", "sha256"],
           "additionalProperties": false,
           "properties": {
-            "files": {
-              "type": "object",
-              "required": ["Dockerfile", "run-builder.sh", "build-in-container.sh"],
-              "additionalProperties": {"$ref": "#/$defs/sha256"}
-            },
+            "files": {"type": "object", "required": ["Dockerfile", "run-builder.sh", "build-in-container.sh"], "additionalProperties": {"$ref": "#/$defs/sha256"}},
             "sha256": {"$ref": "#/$defs/sha256"}
           }
         },
@@ -161,26 +163,31 @@
     },
     "checks": {
       "type": "object",
-      "required": ["expected_version_matches_source_state", "version_output_matches_expected", "binary_matches_elf_report", "workflow_sha_is_source_commit"],
+      "required": ["expected_version_matches_source_state", "version_output_matches_expected", "binary_matches_elf_report", "workflow_identity_allowed"],
       "additionalProperties": false,
       "properties": {
         "expected_version_matches_source_state": {"const": true},
         "version_output_matches_expected": {"const": true},
         "binary_matches_elf_report": {"const": true},
-        "workflow_sha_is_source_commit": {"enum": [true, "not-applicable"]}
+        "workflow_identity_allowed": {"enum": [true, "not-applicable"]}
       }
     }
   },
   "allOf": [
     {
-      "if": {"properties": {"source": {"properties": {"tags": {"maxItems": 0}}}}},
-      "then": {"properties": {"artifact": {"properties": {"expected_version": {"pattern": "-[0-9a-f]{9}$"}}}}},
-      "else": {"properties": {"artifact": {"properties": {"expected_version": {"pattern": "-release$"}}}}}
+      "if": {"properties": {"workflow": {"required": ["local_build"]}}},
+      "then": {"properties": {"checks": {"properties": {"workflow_identity_allowed": {"const": "not-applicable"}}}}},
+      "else": {
+        "properties": {
+          "checks": {"properties": {"workflow_identity_allowed": {"const": true}}},
+          "source": {"properties": {"fetch_mode": {"const": "depth-1-no-tags+unshallow-no-tags"}}}
+        }
+      }
     },
     {
-      "if": {"properties": {"workflow": {"required": ["local_build"]}}},
-      "then": {"properties": {"checks": {"properties": {"workflow_sha_is_source_commit": {"const": "not-applicable"}}}}},
-      "else": {"properties": {"checks": {"properties": {"workflow_sha_is_source_commit": {"const": true}}}}}
+      "if": {"properties": {"workflow": {"properties": {"event_name": {"const": "pull_request"}}, "required": ["event_name"]}}},
+      "then": {"properties": {"workflow": {"properties": {"ref": {"pattern": "^refs/pull/[0-9]+/merge$"}, "pull_request": {"type": "object"}}}}},
+      "else": {"properties": {"workflow": {"properties": {"ref": {"pattern": "^refs/heads/"}, "pull_request": {"type": "null"}}}}}
     }
   ]
 }

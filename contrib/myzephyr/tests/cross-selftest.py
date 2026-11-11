@@ -395,17 +395,25 @@ def make_artifact(target, data=None):
     for name, lines in f["build_logs"].items():
         with open(os.path.join(logs, name), "w") as fh:
             fh.write("".join(l + "\n" for l in lines))
-    open(os.path.join(work_d, "source-identity.txt"), "w").write(f["source_identity"])
+    # the fixture's source identity predates the two lines verify-source.sh now writes after the commit time
+    ident = f["source_identity"].splitlines()
+    at = next(i for i, l in enumerate(ident) if l.startswith("source_commit_time=")) + 1
+    ident[at:at] = ["tags_at_head=none", "tags_in_checkout=0"]
+    open(os.path.join(work_d, "source-identity.txt"), "w").write("\n".join(ident) + "\n")
+    record_file = os.path.join(work_d, "checkout.txt")
+    open(record_file, "w").write(f"fetch_mode=depth-1-no-tags+unshallow-no-tags\ntags_in_checkout=0\ntags_at_head=none\n"
+                                 f"event_name=push\nbuilt_commit={commit}\n")
     open(os.path.join(work_d, "expected-version.txt"), "w").write(f["expected_version"] + "\n")
     os.makedirs(os.path.join(work_d, "build"))
     art = os.path.join(d, "art")
     os.makedirs(art)
-    env = dict(os.environ, **CTX, GITHUB_SHA=commit, GITHUB_WORKFLOW_SHA=commit)
+    env = dict(os.environ, **CTX, GITHUB_SHA=commit, GITHUB_WORKFLOW_SHA=commit, MYZ_PULL_REQUEST="none")
     p = subprocess.run([PY, "-I", os.path.join(tools, "make-cross-manifest.py"), "--target", target,
                         "--source-identity", os.path.join(work_d, "source-identity.txt"),
                         "--expected-version", os.path.join(work_d, "expected-version.txt"), "--builder-logs", logs,
                         "--static-report", rep, "--embedded-report", emb, "--binary", b,
                         "--build-dir", os.path.join(work_d, "build"), "--recipe-dir", os.path.join(tools, "cross"),
+                        "--checkout-record", record_file,
                         "--out", os.path.join(art, "manifest.json")], env=env, capture_output=True, text=True)
     if p.returncode != 0:
         raise SystemExit(f"make-cross-manifest failed for {target}: {p.stderr}")
@@ -428,11 +436,15 @@ def write_sums(art, name):
     open(os.path.join(art, "SHA256SUMS"), "w").write("".join(lines))
 
 
-def verify(target, art, trusted, *, version=None, target_arg=None, extra=(), static=None, run_id="1"):
+def verify(target, art, trusted, *, version=None, target_arg=None, extra=(), static=None, run_id="1", ref=None,
+           event="push", github_sha=None):
     f = fx[target]
+    ref = ref or CTX["GITHUB_REF"]
     cmd = [PY, "-I", os.path.join(tools, "verify-cross-artifact.py"), "--target", target_arg or target, "--artifact", art,
            "--expected-commit", f["source_commit"], "--expected-version", version or f["expected_version"],
-           "--repository", CTX["GITHUB_REPOSITORY"], "--ref", CTX["GITHUB_REF"], "--workflow-ref", CTX["GITHUB_WORKFLOW_REF"],
+           "--repository", CTX["GITHUB_REPOSITORY"], "--ref", ref,
+           "--workflow-ref", CTX["GITHUB_WORKFLOW_REF"].rsplit("@", 1)[0] + "@" + ref,
+           "--event-name", event, "--github-sha", github_sha or f["source_commit"], "--pull-request", "none",
            "--run-id", run_id, "--run-attempt", "1", *POLICY,
            "--source-identity", os.path.join(trusted, "source-identity.txt"),
            "--static-report", static or os.path.join(trusted, "static-report.txt"),
@@ -462,6 +474,19 @@ for t in TARGETS:
     expect_verify("wrong target", t, verify(t, art, trusted, target_arg=other), 1, "FAILED")
     expect_verify("wrong version", t, verify(t, art, trusted, version="2.3.0-0123abcde"), 1, "expected-version.txt")
     expect_verify("wrong run id", t, verify(t, art, trusted, run_id="2"), 1, "workflow.run_id")
+    expect_verify("trusted ref outside the table", t, verify(t, art, trusted, ref="refs/heads/main"), 1,
+                  "trusted run identity not in the table")
+    expect_verify("trusted pull_request event without pull request fields", t, verify(t, art, trusted, event="pull_request"), 1,
+                  "trusted run identity not in the table")
+    expect_verify("trusted push to my/v2.3.0 against a ci-branch manifest", t,
+                  verify(t, art, trusted, ref="refs/heads/my/v2.3.0"), 1, "workflow.ref")
+    expect_verify("expected version release refused", t, verify(t, art, trusted, version="2.3.0-release"), 2, "never accepted")
+    d8, art8, trusted8, _ = make_artifact(t)
+    edit_manifest(art8, lambda m: m["artifact"].__setitem__("expected_version", "2.3.0-release"), name)
+    expect_verify("manifest claims a release version (schema)", t, verify(t, art8, trusted8), 1, "artifact.expected_version")
+    d9, art9, trusted9, _ = make_artifact(t)
+    edit_manifest(art9, lambda m: m["source"].__setitem__("tags_at_head", "v2.3.0-sec.2-my.1"), name)
+    expect_verify("manifest claims a tag at the commit", t, verify(t, art9, trusted9), 1, "source.tags_at_head")
     # binary replaced after the manifest: SHA256SUMS rewritten too, the hashes still disagree with the manifest
     d2, art2, trusted2, _ = make_artifact(t)
     open(os.path.join(art2, name), "ab").write(b"\0")

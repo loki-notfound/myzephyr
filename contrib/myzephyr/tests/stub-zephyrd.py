@@ -75,7 +75,7 @@ if scenario == "early-exit":
 
 
 def info():
-    res = {"status": "OK", "offline": offline, "version": "2.3.0-release", "nettype": "mainnet",
+    res = {"status": "OK", "offline": offline, "version": "2.3.0-4f6b84e81", "nettype": "mainnet",
            "mainnet": True, "height": 1, "target_height": 0, "outgoing_connections_count": 0,
            "incoming_connections_count": 0, "untrusted": False, "restricted": False}
     if scenario == "wrong-version":

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "myzephyr/daemon-cross-build-manifest/1",
+  "$id": "myzephyr/daemon-cross-build-manifest/2",
   "title": "myzephyr cross-built zephyrd: Linux AArch64, macOS x86_64, Windows x86_64",
   "description": "Written by make-cross-manifest.py, checked by verify-cross-artifact.py. The binary cannot run on the build machine: the version is checked as an embedded string and by the native runtime job, never by executing it here.",
   "type": "object",
@@ -20,7 +20,7 @@
   "additionalProperties": false,
   "properties": {
     "schema": {
-      "const": "myzephyr/daemon-cross-build-manifest/1"
+      "const": "myzephyr/daemon-cross-build-manifest/2"
     },
     "artifact": {
       "type": "object",
@@ -46,7 +46,7 @@
         },
         "expected_version": {
           "type": "string",
-          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-(release|[0-9a-f]{9})$"
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{9}$"
         },
         "target": {
           "$ref": "#/$defs/cross_target"
@@ -106,7 +106,9 @@
       "required": [
         "commit",
         "commit_time",
-        "tags",
+        "tags_at_head",
+        "tags_in_checkout",
+        "fetch_mode",
         "own_commits",
         "submodules"
       ],
@@ -118,29 +120,17 @@
         "commit_time": {
           "type": "integer"
         },
-        "tags": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "name",
-              "object",
-              "signer_primary_fingerprint"
-            ],
-            "additionalProperties": false,
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1
-              },
-              "object": {
-                "$ref": "#/$defs/sha1"
-              },
-              "signer_primary_fingerprint": {
-                "$ref": "#/$defs/fingerprint"
-              }
-            }
-          }
+        "tags_at_head": {
+          "const": "none"
+        },
+        "tags_in_checkout": {
+          "const": 0
+        },
+        "fetch_mode": {
+          "enum": [
+            "depth-1-no-tags+unshallow-no-tags",
+            "local"
+          ]
         },
         "own_commits": {
           "type": "array",
@@ -229,7 +219,8 @@
             "run_number",
             "run_attempt",
             "job",
-            "server_url"
+            "server_url",
+            "pull_request"
           ],
           "additionalProperties": false,
           "properties": {
@@ -239,7 +230,7 @@
             },
             "ref": {
               "type": "string",
-              "pattern": "^refs/heads/"
+              "pattern": "^refs/(heads/ci/daemon-release-baseline|heads/my/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*|pull/[0-9]+/merge)$"
             },
             "sha": {
               "$ref": "#/$defs/sha1"
@@ -252,7 +243,10 @@
               "$ref": "#/$defs/sha1"
             },
             "event_name": {
-              "const": "push"
+              "enum": [
+                "push",
+                "pull_request"
+              ]
             },
             "run_id": {
               "type": "string",
@@ -272,6 +266,16 @@
             },
             "server_url": {
               "type": "string"
+            },
+            "pull_request": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/$defs/pull_request"
+                }
+              ]
             }
           }
         },
@@ -465,7 +469,7 @@
         "embedded_version_matches_expected",
         "binary_matches_static_report",
         "binary_matches_embedded_report",
-        "workflow_sha_is_source_commit"
+        "workflow_identity_allowed"
       ],
       "additionalProperties": false,
       "properties": {
@@ -481,7 +485,7 @@
         "binary_matches_embedded_report": {
           "const": true
         },
-        "workflow_sha_is_source_commit": {
+        "workflow_identity_allowed": {
           "enum": [
             true,
             "not-applicable"
@@ -509,6 +513,128 @@
         "x86_64-apple-darwin",
         "x86_64-w64-mingw32"
       ]
+    },
+    "pull_request": {
+      "type": "object",
+      "required": [
+        "number",
+        "base_ref",
+        "base_sha",
+        "head_sha",
+        "head_ref",
+        "head_repository"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "base_ref": {
+          "type": "string",
+          "pattern": "^my/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+        },
+        "base_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "head_sha": {
+          "$ref": "#/$defs/sha1"
+        },
+        "head_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head_repository": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "workflow": {
+            "required": [
+              "local_build"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "checks": {
+            "properties": {
+              "workflow_identity_allowed": {
+                "const": "not-applicable"
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "checks": {
+            "properties": {
+              "workflow_identity_allowed": {
+                "const": true
+              }
+            }
+          },
+          "source": {
+            "properties": {
+              "fetch_mode": {
+                "const": "depth-1-no-tags+unshallow-no-tags"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "workflow": {
+            "properties": {
+              "event_name": {
+                "const": "pull_request"
+              }
+            },
+            "required": [
+              "event_name"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "workflow": {
+            "properties": {
+              "ref": {
+                "pattern": "^refs/pull/[0-9]+/merge$"
+              },
+              "pull_request": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "workflow": {
+            "properties": {
+              "ref": {
+                "pattern": "^refs/heads/"
+              },
+              "pull_request": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

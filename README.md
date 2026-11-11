@@ -23,7 +23,11 @@ or database formats; the version number stays upstream's. Interoperability with 
 nodes and wallets is still being tested, and no release has been published.
 
 Verifying a build: `contrib/myzephyr/README.md` describes the pinned builder, the source
-checks and the build manifest. The base tag is signed by
+checks and the build manifest. Binaries are built first and tagged afterwards: they come
+from a checkout without tags and report `v2.3.0-<first 9 hex digits of the commit>`, also
+after the release tag is put on that commit. To reproduce that string, build the tagged
+commit from a checkout without tags (`git clone --no-tags`, or delete the tag locally);
+with the tag present, the build reports `v2.3.0-release` instead. The base tag is signed by
 `FB39 94F0 997C A6F0 43D7  2491 9EFF 03F5 27D2 40A1`; both public keys are in
 `contrib/myzephyr/keys/`.
 

@@ -3,6 +3,7 @@
 
   verify-cross-artifact.py --target T --artifact DIR --expected-commit SHA --expected-version V
       --repository OWNER/NAME --ref REF --workflow-ref REF --run-id N --run-attempt N
+      --event-name E --github-sha SHA --pull-request none|JSON
       [--server-url URL] [--producer-job ID]
       --base-repository URL --base-tag NAME --base-tag-object SHA --base-commit SHA
       --base-fingerprint FPR --maintainer-fingerprint FPR
@@ -13,11 +14,12 @@ verify-artifact.py: every value after --artifact comes from the verifier. --stat
 the verifier's own check-elf.sh --arch aarch64 / check-macho.py / check-pe.py report of the
 downloaded binary, --embedded-report its own check-embedded.py report, --recipe-dir
 contrib/myzephyr/cross of its own checkout. The workflow, source and base checks are
-verify-artifact.py's own code (imported). Target-specific checks:
+verify-artifact.py's own code (imported), including the run-identity table and the
+refusal of "release" versions. Target-specific checks:
   files     SHA256SUMS lists exactly the binary (zephyrd or zephyrd.exe), manifest.json,
             expected-version.txt and source-identity.txt; static-report.txt,
             embedded-report.txt and the build-logs records are present;
-  schema    manifest-cross.schema.json (myzephyr/daemon-cross-build-manifest/1);
+  schema    manifest-cross.schema.json (myzephyr/daemon-cross-build-manifest/2);
   version   expected version as in verify-artifact.py; the binary embeds exactly it;
   binary    name, target and format of T, actual size and hash;
   static    the verifier's report passed and describes this binary; the manifest and the
@@ -65,7 +67,7 @@ HOST_DEPENDENT = {"elf": {"elf_file"}, "macho": set(), "pe": set()}
 
 class CrossVerifier(va.Verifier):
     SCHEMA_FILE = "manifest-cross.schema.json"
-    SCHEMA_ID = "myzephyr/daemon-cross-build-manifest/1"
+    SCHEMA_ID = "myzephyr/daemon-cross-build-manifest/2"
 
     def __init__(self, a):
         super().__init__(a)
@@ -79,16 +81,9 @@ class CrossVerifier(va.Verifier):
         prov = self.provenance()
         if prov is None:
             return
-        flat, groups, tags = prov
+        flat, groups = prov
         art = m["artifact"]
-
-        ev_text = va.read_text(os.path.join(d, "expected-version.txt"))
-        self.check("version", re.fullmatch(r"\S+\n?", ev_text), "expected-version.txt holds one value")
-        self.eq("version", "expected-version.txt", ev_text.strip(), a.expected_version)
-        self.eq("version", "artifact.expected_version", art["expected_version"], a.expected_version)
-        suffix = "release" if tags else commit[:9]
-        self.check("version", a.expected_version.endswith("-" + suffix),
-                   f"expected version {a.expected_version} ends with -{suffix} ({'tags' if tags else 'no tag'} at the commit)")
+        self.version_checks(art)
 
         bp = os.path.join(d, self.name)
         size, digest = os.path.getsize(bp), va.sha256_file(bp)
@@ -166,7 +161,8 @@ class CrossVerifier(va.Verifier):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     for name in ("target", "artifact", "expected-commit", "expected-version", "repository", "ref", "workflow-ref",
-                 "run-id", "run-attempt", "base-repository", "base-tag", "base-tag-object", "base-commit",
+                 "run-id", "run-attempt", "event-name", "github-sha", "pull-request",
+                 "base-repository", "base-tag", "base-tag-object", "base-commit",
                  "base-fingerprint", "maintainer-fingerprint", "source-identity", "static-report",
                  "embedded-report", "recipe-dir"):
         p.add_argument(f"--{name}", required=True)
@@ -178,17 +174,7 @@ def main():
         if a.target not in TARGETS:
             raise va.Usage(f"--target must be one of {sorted(TARGETS)}")
         v = CrossVerifier(a)
-        for name in ("expected_commit", "base_tag_object", "base_commit"):
-            if not va.SHA1.fullmatch(getattr(a, name)):
-                raise va.Usage(f"--{name.replace('_', '-')} must be 40 lowercase hex digits")
-        for name in ("base_fingerprint", "maintainer_fingerprint"):
-            if not va.FPR.fullmatch(getattr(a, name)):
-                raise va.Usage(f"--{name.replace('_', '-')} must be a 40-digit uppercase fingerprint")
-        for name in ("run_id", "run_attempt"):
-            if not re.fullmatch(r"[1-9][0-9]*", getattr(a, name)):
-                raise va.Usage(f"--{name.replace('_', '-')} must be a positive number")
-        if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-(release|[0-9a-f]{9})", a.expected_version):
-            raise va.Usage("--expected-version must look like 2.3.0-<9 hex digits> or 2.3.0-release")
+        va.check_common_options(a)
         for f in (a.source_identity, a.static_report, a.embedded_report):
             if not os.path.isfile(f):
                 raise va.Usage(f"{f} is not a file")

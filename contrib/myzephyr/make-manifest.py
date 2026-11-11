@@ -3,38 +3,51 @@
 
   make-manifest.py --source-identity F --expected-version F --builder-logs D
                    --elf-report F --binary F --version-output F --build-dir D
-                   --recipe-dir D --out F [--local]
+                   --recipe-dir D --out F (--checkout-record F | --local)
 
 Inputs: the key=value files written by verify-source.sh and check-elf.sh, the
 expected version (zephyrd-check.py expected-version), the log directory of
 run-builder.sh (image.txt, toolchain.txt, steps.txt, builder-packages.tsv,
 builder-apt-state.txt), the CMake build directory (flags.make files are scanned
-for CPU-specific compiler options) and the recipe directory (linux/).
+for CPU-specific compiler options), the recipe directory (linux/) and the record of
+ci-checkout.sh (fetch mode, no tag in the checkout).
 
 The manifest keeps three identities apart:
-  source    the commit that was compiled (the pushed head) and the tags at it;
+  source    the commit that was compiled (the pushed commit, or the head commit of a pull
+            request), "tags_at_head": "none" and how the checkout was fetched;
   base      the signed zephyr-backports tag the source descends from;
-  workflow  the GitHub Actions run, read from the GITHUB_* environment, or
-            {"local_build": true} with --local.
+  workflow  the GitHub Actions run, read from the GITHUB_* environment and
+            MYZ_PULL_REQUEST (written by run-identity.py), or {"local_build": true} with --local.
 The base tag never points at the source commit unless they are the same commit.
 
 Consistency checks, recorded under "checks"; any failure exits 1 after writing:
-  expected_version_matches_source_state  "-release" exactly when a tag is at the
-                                         source commit, else "-" + its first 9 hex digits
+  expected_version_matches_source_state  no tag at the source commit and the expected
+                                         version is <number>-<first 9 hex digits of it>;
+                                         "release" is never accepted
   version_output_matches_expected        --version ends with "(v<expected>)"
   binary_matches_elf_report              the ELF report describes this binary
-  workflow_sha_is_source_commit          GITHUB_SHA and GITHUB_WORKFLOW_SHA equal the
-                                         source commit ("not-applicable" with --local)
+  workflow_identity_allowed              the run identity is a row of run-identity.py's
+                                         table and its built commit is the source commit
+                                         ("not-applicable" with --local)
 """
 import argparse
 import glob
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import sys
 
-SCHEMA = "myzephyr/daemon-build-manifest/2"
+sys.dont_write_bytecode = True
+_spec = importlib.util.spec_from_file_location(
+    "run_identity", os.path.join(os.path.dirname(os.path.abspath(__file__)), "run-identity.py"))
+ri = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(ri)
+
+SCHEMA = "myzephyr/daemon-build-manifest/3"
+FETCH_MODE = "depth-1-no-tags+unshallow-no-tags"
+VERSION_RE = re.compile(r"(\d+\.\d+\.\d+)-([0-9a-f]{9})")
 CPU_FLAG_RE = re.compile(r"(?<!\S)-m(arch|tune|cpu|aes|avx\w*|sse\w*|ssse3|pclmul|bmi\w*|fma|rdrnd|sha)(=\S+)?")
 RECIPE_FILES = ("Dockerfile", "run-builder.sh", "build-in-container.sh")
 GITHUB_ENV = {"repository": "GITHUB_REPOSITORY", "ref": "GITHUB_REF", "sha": "GITHUB_SHA",
@@ -82,6 +95,40 @@ def cpu_flags(build_dir):
     return {flag: {"count": len(places), "examples": sorted(places)[:5]} for flag, places in sorted(found.items())}
 
 
+def source_state(src, record_path, local):
+    """tags_at_head, tags_in_checkout and fetch_mode from the source identity and the checkout record."""
+    rec = {}
+    if record_path:
+        rec, _ = kv(record_path)
+        if rec.get("built_commit") != src["source_commit"] or rec.get("tags_in_checkout") != "0":
+            sys.exit(f"make-manifest: checkout record {record_path} is not for {src['source_commit']} without tags")
+    elif not local:
+        sys.exit("make-manifest: --checkout-record is required outside --local")
+    return {"tags_at_head": src.get("tags_at_head"),
+            "tags_in_checkout": int(src["tags_in_checkout"]) if src.get("tags_in_checkout", "").isdigit() else None,
+            "fetch_mode": rec.get("fetch_mode", "local") if (record_path or local) else None}
+
+
+def workflow_record(commit, local):
+    """(workflow, workflow_identity_allowed check) from the environment."""
+    if local:
+        return {"local_build": True}, "not-applicable"
+    missing = [v for v in list(GITHUB_ENV.values()) + ["MYZ_PULL_REQUEST"] if not os.environ.get(v)]
+    if missing:
+        sys.exit(f"make-manifest: not a GitHub Actions environment (missing {missing}); use --local for a replay")
+    workflow = {k: os.environ[v] for k, v in GITHUB_ENV.items()}
+    workflow["pull_request"] = ri.parse_pull_request(os.environ["MYZ_PULL_REQUEST"])
+    errs = ri.errors(dict(workflow, built_commit=commit))
+    for e in errs:
+        print(f"make-manifest: run identity: {e}", file=sys.stderr)
+    return workflow, not errs
+
+
+def version_state_ok(expected, commit, state):
+    m = VERSION_RE.fullmatch(expected)
+    return bool(m) and m.group(2) == commit[:9] and state["tags_at_head"] == "none" and state["tags_in_checkout"] == 0
+
+
 def recipe(recipe_dir):
     files = {name: sha256(os.path.join(recipe_dir, name)) for name in RECIPE_FILES}
     combined = hashlib.sha256("".join(f"{files[n]}  {n}\n" for n in sorted(files)).encode()).hexdigest()
@@ -94,6 +141,7 @@ def main():
               "version-output", "build-dir", "recipe-dir", "out"):
         p.add_argument(f"--{a}", required=True)
     p.add_argument("--local", action="store_true", help="a local replay, not a GitHub Actions run")
+    p.add_argument("--checkout-record", help="ci-checkout.sh's record (required outside --local)")
     a = p.parse_args()
 
     src, groups = kv(a.source_identity)
@@ -111,37 +159,18 @@ def main():
     version_output = open(a.version_output).read().strip()
 
     commit = src["source_commit"]
-    tags = []
-    for name, val in sorted(groups.get("source_tag", {}).items()):
-        obj, signer = val.split()
-        tags.append({"name": name, "object": obj, "signer_primary_fingerprint": signer})
+    state = source_state(src, a.checkout_record, a.local)
     own = [{"commit": c, "paths": paths.split()} for c, paths in groups.get("own_commit", {}).items()]
     if len(own) != int(src["own_commit_count"]):
         sys.exit("make-manifest: own_commit lines do not match own_commit_count")
 
-    if a.local:
-        workflow = {"local_build": True}
-        wf_check = "not-applicable"
-    else:
-        missing = [v for v in GITHUB_ENV.values() if not os.environ.get(v)]
-        if missing:
-            sys.exit(f"make-manifest: not a GitHub Actions environment (missing {missing}); use --local for a replay")
-        workflow = {k: os.environ[v] for k, v in GITHUB_ENV.items()}
-        wf_check = workflow["sha"] == commit and workflow["workflow_sha"] == commit
-
-    m = re.fullmatch(r"(\d+\.\d+\.\d+)-(release|[0-9a-f]{9})", expected)
-    if not m:
-        version_state_ok = False
-    elif tags:
-        version_state_ok = m.group(2) == "release"
-    else:
-        version_state_ok = m.group(2) == commit[:9]
+    workflow, wf_check = workflow_record(commit, a.local)
     binary_sha = sha256(a.binary)
     checks = {
-        "expected_version_matches_source_state": version_state_ok,
+        "expected_version_matches_source_state": version_state_ok(expected, commit, state),
         "version_output_matches_expected": len(version_output.splitlines()) == 1 and version_output.endswith(f"(v{expected})"),
         "binary_matches_elf_report": elf.get("elf_sha256") == binary_sha,
-        "workflow_sha_is_source_commit": wf_check,
+        "workflow_identity_allowed": wf_check,
     }
 
     manifest = {
@@ -157,7 +186,7 @@ def main():
         "source": {
             "commit": commit,
             "commit_time": int(src["source_commit_time"]),
-            "tags": tags,
+            **state,
             "own_commits": own,
             "submodules": groups.get("submodule", {}),
         },
