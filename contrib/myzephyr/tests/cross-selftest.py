@@ -5,11 +5,13 @@ check-embedded.py, make-cross-manifest.py and verify-cross-artifact.py.
   cross-selftest.py <work-dir>     (<work-dir> must not exist)
 
 Fixtures: tests/cross-fixture/<target>.json hold metadata measured on real local cross builds
-(macOS and Windows of 13d6352b6, Linux AArch64 of 3dea684bb: static report values and the
-build-log records). From them this script makes small SYNTHETIC binaries: a Mach-O and a PE
-file with the measured architecture, minimum OS and library list, and an ELF file with the
-measured machine, interpreter, NEEDED set and glibc version references, each carrying the
-expected version and the four mainnet IP seeds as strings. Nothing is executed; these are not
+(macOS x86_64 and Windows of 13d6352b6, Linux AArch64 of 3dea684bb, macOS arm64 of 8107755c0:
+static report values and the build-log records). From them this script makes small SYNTHETIC
+binaries: Mach-O and PE files with the measured architecture, minimum OS and library list (the
+arm64 Mach-O with an ad-hoc, linker-signed code signature whose page hashes are computed over
+the synthetic file, as ld64 writes it), and an ELF file with the measured machine, interpreter,
+NEEDED set and glibc version references, each carrying the expected version and the four
+mainnet IP seeds as strings. Nothing is executed; these are not
 the real binaries and say nothing about them beyond the checks' logic.
 
 Each positive case must pass; each negative case changes one variable and must fail with
@@ -62,7 +64,8 @@ def strings_blob(version, seeds=SEEDS, extra=()):
 
 # ---------------------------------------------------------------- synthetic Mach-O
 def macho(meta, version, *, cputype=None, min_os=None, dylibs=None, rpath=None, fat=False, filetype=2,
-          seeds=SEEDS, extra_strings=()):
+          seeds=SEEDS, extra_strings=(), signed=None, corrupt_after_signing=False):
+    """signed: None follows the fixture (a code signature if it records one), False omits it."""
     def ver(s):
         a, b, c = (int(x) for x in s.split("."))
         return (a << 16) | (b << 8) | c
@@ -73,17 +76,48 @@ def macho(meta, version, *, cputype=None, min_os=None, dylibs=None, rpath=None, 
     name = pad(meta["dylinker"].encode() + b"\0")
     cmds.append(struct.pack("<III", 0xE, 12 + len(name), 12) + name)
     mo = min_os or meta["min_os"]
-    cmds.append(struct.pack("<IIII", 0x24, 16, ver(mo), ver(meta["sdk"])))
+    if meta.get("min_os_cmd", "LC_VERSION_MIN_MACOSX") == "LC_BUILD_VERSION platform 1":
+        cmds.append(struct.pack("<IIIIII", 0x32, 24, 1, ver(mo), ver(meta["sdk"]), 0))
+    else:
+        cmds.append(struct.pack("<IIII", 0x24, 16, ver(mo), ver(meta["sdk"])))
     for lib in (dylibs if dylibs is not None else meta["dylibs"]):
         s = pad(lib.encode() + b"\0")
         cmds.append(struct.pack("<IIIIII", 0xC, 24 + len(s), 24, 2, 0x10000, 0x10000) + s)
     if rpath:
         s = pad(rpath.encode() + b"\0")
         cmds.append(struct.pack("<III", 0x8000001C, 12 + len(s), 12) + s)
-    body = b"".join(cmds)
-    hdr = struct.pack("<IiiIIIII", 0xFEEDFACF, cputype if cputype is not None else int(meta["cputype"], 16),
-                      3, filetype, len(cmds), len(body), int(meta["flags"], 16), 0)
-    data = hdr + body + strings_blob(version, seeds, extra_strings)
+    sign = ("code_signature" in meta) if signed is None else signed
+    cpu = cputype if cputype is not None else int(meta["cputype"], 16)
+    tail = strings_blob(version, seeds, extra_strings)
+    if not sign:
+        body = b"".join(cmds)
+        hdr = struct.pack("<IiiIIIII", 0xFEEDFACF, cpu, 0 if cpu == 0x0100000C else 3, filetype, len(cmds), len(body),
+                          int(meta["flags"], 16), 0)
+        data = hdr + body + tail
+    else:
+        # ad-hoc, linker-signed signature as ld64 writes it: SuperBlob with one CodeDirectory
+        # (version 0x20400), SHA-256 over 4096-byte pages up to the signature's offset
+        ident = meta["code_signature"]["identifier"].encode() + b"\0"
+        n_cmds = len(cmds) + 1
+        size_cmds = sum(len(c) for c in cmds) + 16
+        unsigned_len = 32 + size_cmds + len(tail)
+        sigoff = unsigned_len + (-unsigned_len % 16)
+        ncode = (sigoff + 4095) // 4096
+        hashoff = 88 + len(ident)
+        cdlen = hashoff + 32 * ncode
+        sblen = 20 + cdlen
+        cmds.append(struct.pack("<IIII", 0x1D, 16, sigoff, sblen))
+        body = b"".join(cmds)
+        hdr = struct.pack("<IiiIIIII", 0xFEEDFACF, cpu, 0, filetype, n_cmds, len(body), int(meta["flags"], 16), 0)
+        data = hdr + body + tail
+        data += b"\0" * (sigoff - len(data))
+        hashes = b"".join(hashlib.sha256(data[i:i + 4096]).digest() for i in range(0, sigoff, 4096))
+        cd = struct.pack(">IIIIIIIIIBBBBIIIIQQQQ", 0xFADE0C02, cdlen, 0x20400, 0x20002, hashoff, 88, 0, ncode, sigoff,
+                         32, 2, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0) + ident + hashes
+        data += struct.pack(">IIIII", 0xFADE0CC0, sblen, 1, 0, 20) + cd
+        if corrupt_after_signing:
+            i = 32 + len(body) + 1
+            data = data[:i] + bytes([data[i] ^ 0xFF]) + data[i + 1:]
     if fat:
         data = struct.pack(">II", 0xCAFEBABE, 1) + struct.pack(">iiIII", 0x01000007, 3, 4096, len(data), 12) \
             + b"\0" * (4096 - 28) + data
@@ -271,6 +305,8 @@ def run_checker(target, meta, data, d):
         cmd = ["bash", os.path.join(tools, "check-elf.sh"), "--arch", "aarch64", b, rep]
     elif target == "x86_64-apple-darwin":
         cmd = [PY, "-I", os.path.join(tools, "check-macho.py"), b, rep]
+    elif target == "aarch64-apple-darwin":
+        cmd = [PY, "-I", os.path.join(tools, "check-macho.py"), "--arch", "arm64", b, rep]
     else:
         cmd = [PY, "-I", os.path.join(tools, "check-pe.py"), b, rep]
     p = subprocess.run(cmd, capture_output=True, text=True)
@@ -284,10 +320,11 @@ def expect_checker(name, target, meta, data, want_exit, frag=""):
 
 
 # ---------------------------------------------------------------- checker cases
-TARGETS = ("aarch64-linux-gnu", "x86_64-apple-darwin", "x86_64-w64-mingw32")
+TARGETS = ("aarch64-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-w64-mingw32")
 fx = {t: json.load(open(os.path.join(fixdir, f"{t}.json"))) for t in TARGETS}
 V = fx["x86_64-apple-darwin"]["expected_version"]
 VA = fx["aarch64-linux-gnu"]["expected_version"]
+VM = fx["aarch64-apple-darwin"]["expected_version"]
 
 e = fx["aarch64-linux-gnu"]["elf"]
 expect_checker("positive (measured metadata)", "aarch64-linux-gnu", e, elf(e, VA), 0)
@@ -325,6 +362,25 @@ expect_checker("universal binary", "x86_64-apple-darwin", m, macho(m, V, fat=Tru
 expect_checker("LC_RPATH present", "x86_64-apple-darwin", m, macho(m, V, rpath="@loader_path/../lib"), 1, "LC_RPATH")
 expect_checker("not MH_EXECUTE", "x86_64-apple-darwin", m, macho(m, V, filetype=6), 1, "filetype")
 
+ma = fx["aarch64-apple-darwin"]["macho"]
+expect_checker("positive (measured metadata)", "aarch64-apple-darwin", ma, macho(ma, VM), 0)
+d_ = newdir("macos-arm64-measured-values")
+rc_, err_, rep_, _ = run_checker("aarch64-apple-darwin", ma, macho(ma, VM), d_)
+got_ = dict(l.rstrip("\n").split("=", 1) for l in open(rep_) if "=" in l)
+want_ = fx["aarch64-apple-darwin"]["measured"]["report"]
+keys_ = ("macho_magic", "macho_cputype", "macho_filetype", "macho_flags", "macho_min_os", "macho_sdk", "macho_dylinker",
+         "macho_dylibs", "macho_rpath", "macho_code_signature", "macho_code_signature_kind", "macho_checks")
+record("aarch64-apple-darwin: synthetic report equals the real build's report in every format value",
+       rc_ == 0 and all(got_.get(k) == want_.get(k) for k in keys_),
+       str({k: (got_.get(k), want_.get(k)) for k in keys_ if got_.get(k) != want_.get(k)}))
+expect_checker("wrong architecture (x86_64)", "aarch64-apple-darwin", ma, macho(ma, VM, cputype=0x01000007), 1, "cputype")
+expect_checker("unsigned", "aarch64-apple-darwin", ma, macho(ma, VM, signed=False), 1, "no code signature")
+expect_checker("wrong minimum OS (11.0)", "aarch64-apple-darwin", ma, macho(ma, VM, min_os="11.0.0"), 1, "minimum macOS")
+expect_checker("extra library", "aarch64-apple-darwin", ma,
+               macho(ma, VM, dylibs=ma["dylibs"] + ["/usr/local/lib/libssl.3.dylib"]), 1, "outside the allowed OS set")
+expect_checker("signature does not match the file", "aarch64-apple-darwin", ma, macho(ma, VM, corrupt_after_signing=True),
+               1, "page hashes")
+
 p_ = fx["x86_64-w64-mingw32"]["pe"]
 expect_checker("positive (measured metadata)", "x86_64-w64-mingw32", p_, pe(p_, V), 0)
 expect_checker("wrong architecture (i386)", "x86_64-w64-mingw32", p_, pe(p_, V, machine=0x14C), 1, "machine")
@@ -360,6 +416,12 @@ p_e = subprocess.run([PY, "-I", os.path.join(tools, "check-embedded.py"), os.pat
                       os.path.join(d_, "r.txt")], capture_output=True, text=True)
 record("embedded: aarch64-linux-gnu ELF with the wrong version", p_e.returncode == 1 and "not embedded" in p_e.stderr,
        f"exit {p_e.returncode} {p_e.stderr.strip()[:200]!r}")
+d_ = newdir("embedded-macos-arm64-wrong-version")
+open(os.path.join(d_, "zephyrd"), "wb").write(macho(ma, "2.3.0-0123abcde"))
+p_e = subprocess.run([PY, "-I", os.path.join(tools, "check-embedded.py"), os.path.join(d_, "zephyrd"), VM,
+                      os.path.join(d_, "r.txt")], capture_output=True, text=True)
+record("embedded: aarch64-apple-darwin Mach-O with the wrong version", p_e.returncode == 1 and "not embedded" in p_e.stderr,
+       f"exit {p_e.returncode} {p_e.stderr.strip()[:200]!r}")
 expect_embedded("version only as a substring", b"v" + V.encode() + b"x\0" + strings_blob("2.3.0-0123abcde")[1:], 1, "not embedded")
 
 
@@ -380,7 +442,7 @@ def synth(target, version=None, **kw):
     version = version or f["expected_version"]
     if target == "aarch64-linux-gnu":
         return elf(f["elf"], version, **kw)
-    if target == "x86_64-apple-darwin":
+    if target in ("x86_64-apple-darwin", "aarch64-apple-darwin"):
         return macho(f["macho"], version, **kw)
     return pe(f["pe"], version, **kw)
 
@@ -478,7 +540,7 @@ for t in TARGETS:
     d, art, trusted, name = make_artifact(t)
     expect_verify("positive (synthetic binary, measured metadata)", t, verify(t, art, trusted), 0)
     other = {"aarch64-linux-gnu": "x86_64-apple-darwin", "x86_64-apple-darwin": "x86_64-w64-mingw32",
-             "x86_64-w64-mingw32": "x86_64-apple-darwin"}[t]
+             "aarch64-apple-darwin": "x86_64-apple-darwin", "x86_64-w64-mingw32": "x86_64-apple-darwin"}[t]
     expect_verify("wrong target", t, verify(t, art, trusted, target_arg=other), 1, "FAILED")
     expect_verify("wrong version", t, verify(t, art, trusted, version="2.3.0-0123abcde"), 1, "expected-version.txt")
     expect_verify("wrong run id", t, verify(t, art, trusted, run_id="2"), 1, "workflow.run_id")
@@ -503,7 +565,8 @@ for t in TARGETS:
     # the artifact's static report claims a value the verifier's own report does not show
     d3, art3, trusted3, _ = make_artifact(t)
     rp = os.path.join(art3, "static-report.txt")
-    key = {"aarch64-linux-gnu": "elf_needed", "x86_64-apple-darwin": "macho_dylibs", "x86_64-w64-mingw32": "pe_imports"}[t]
+    key = {"aarch64-linux-gnu": "elf_needed", "x86_64-apple-darwin": "macho_dylibs", "aarch64-apple-darwin": "macho_dylibs",
+           "x86_64-w64-mingw32": "pe_imports"}[t]
     txt = open(rp).read().replace(f"{key}=", f"{key}=extra.lib ", 1)
     open(rp, "w").write(txt)
     expect_verify("artifact static report differs (extra library)", t, verify(t, art3, trusted3), 1, key)
@@ -514,7 +577,8 @@ for t in TARGETS:
     edit_manifest(art5, lambda m: m["workflow"].__setitem__("local_build", True), name)
     expect_verify("local build manifest", t, verify(t, art5, trusted5), 1, "")
     d6, art6, trusted6, _ = make_artifact(t)
-    wrong_fmt = {"aarch64-linux-gnu": "macho", "x86_64-apple-darwin": "pe", "x86_64-w64-mingw32": "macho"}[t]
+    wrong_fmt = {"aarch64-linux-gnu": "macho", "x86_64-apple-darwin": "pe", "aarch64-apple-darwin": "pe",
+                 "x86_64-w64-mingw32": "macho"}[t]
     edit_manifest(art6, lambda m: m["artifact"].__setitem__("format", wrong_fmt), name)
     expect_verify("format does not match the target (schema)", t, verify(t, art6, trusted6), 1, "oneOf")
     d7, art7, trusted7, _ = make_artifact(t)
@@ -524,6 +588,7 @@ for t in TARGETS:
 # the verifier's own report of a binary with GLIBC_2.30 / the wrong minimum OS / an extra library fails it
 for t, kw, frag in (("aarch64-linux-gnu", {"version_needs": vn_}, "elf_checks"),
                     ("x86_64-apple-darwin", {"min_os": "10.15.0"}, "macho_checks"),
+                    ("aarch64-apple-darwin", {"signed": False}, "macho_checks"),
                     ("x86_64-w64-mingw32", {"imports": fx["x86_64-w64-mingw32"]["pe"]["imports"] + ["libwinpthread-1.dll"]}, "pe_checks")):
     d, art, trusted, name = make_artifact(t)
     bad_d = newdir("bad-binary-" + t)

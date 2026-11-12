@@ -3,7 +3,7 @@
 
   make-release-set.py --checkout DIR --out DIR --run-url URL
       --artifact linux-x86_64=DIR --artifact linux-aarch64=DIR
-      --artifact macos-x86_64=DIR --artifact windows-x86_64=DIR
+      --artifact macos-x86_64=DIR --artifact macos-arm64=DIR --artifact windows-x86_64=DIR
 
 Each --artifact is a build artifact of this run that the calling job has already verified
 (verify-artifact.py or verify-cross-artifact.py with the job's own trusted inputs); this
@@ -86,6 +86,7 @@ PLATFORMS = {  # platform: (target, binary, archive format)
     "linux-x86_64": ("x86_64-unknown-linux-gnu", "zephyrd", "tar.gz"),
     "linux-aarch64": ("aarch64-linux-gnu", "zephyrd", "tar.gz"),
     "macos-x86_64": ("x86_64-apple-darwin", "zephyrd", "tar.gz"),
+    "macos-arm64": ("aarch64-apple-darwin", "zephyrd", "tar.gz"),
     "windows-x86_64": ("x86_64-w64-mingw32", "zephyrd.exe", "zip"),
 }
 # what this run proved per platform: the jobs the package job needs, all of which succeeded
@@ -105,6 +106,10 @@ TESTED = {
         "cross-built in the pinned builder (minimum macOS 10.13, thin x86_64)",
         "on macos-15-intel: --version, a strict offline start with clean shutdown and default public peer discovery",
     ],
+    "macos-arm64": [
+        "cross-built in the pinned builder (thin arm64, minimum macOS 10.13 in the binary; ad-hoc code signature by the linker)",
+        "on macos-15 (Apple Silicon): --version, a strict offline start with clean shutdown and default public peer discovery",
+    ],
     "windows-x86_64": [
         "cross-built in the pinned builder (MinGW-w64, no MinGW runtime DLL)",
         "on windows-2022: --version, a strict offline start with clean shutdown and default public peer discovery",
@@ -114,12 +119,16 @@ NOT_TESTED = {
     "linux-x86_64": "other Linux distributions than the two userlands above",
     "linux-aarch64": "other AArch64 distributions",
     "macos-x86_64": "macOS 10.13 to 14 and Apple Silicon (Rosetta)",
+    "macos-arm64": "macOS 11 to 14 (Apple Silicon Macs start at macOS 11)",
     "windows-x86_64": "Windows 10 and other Windows Server versions",
 }
 REPLACE_NOTE = {
     "linux-x86_64": None, "linux-aarch64": None,
     "macos-x86_64": ("macOS: the binary is not notarized by Apple. After checking the hashes, remove the quarantine "
                      "attribute that a browser download sets: xattr -d com.apple.quarantine zephyrd"),
+    "macos-arm64": ("macOS: the binary carries only the ad-hoc signature the linker writes and is not notarized by Apple. "
+                    "After checking the hashes, remove the quarantine attribute that a browser download sets: "
+                    "xattr -d com.apple.quarantine zephyrd"),
     "windows-x86_64": ("Windows: zephyrd.exe is not Authenticode-signed, like upstream's own builds; SmartScreen may "
                        "warn. After checking the hashes, unblock it (file Properties, Unblock) or choose More info, Run anyway."),
 }
@@ -402,7 +411,7 @@ def main():
             fail(f"--artifact {spec!r}: expected one of {sorted(PLATFORMS)}=DIR, each once")
         arts[plat] = os.path.abspath(d)
     if sorted(arts) != sorted(PLATFORMS):
-        fail(f"need all four platforms, got {sorted(arts)}")
+        fail(f"need all {len(PLATFORMS)} platforms, got {sorted(arts)}")
     if os.path.lexists(a.out):
         fail(f"{a.out} exists")
     checkout = os.path.abspath(a.checkout)

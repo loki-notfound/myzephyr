@@ -1,5 +1,5 @@
-# Cross builders for zephyrd via contrib/depends: Linux AArch64, macOS x86_64 and
-# Windows x86_64. Same base image digest and the same signed snapshot.debian.org
+# Cross builders for zephyrd via contrib/depends: Linux AArch64, macOS x86_64, macOS
+# arm64 and Windows x86_64. Same base image digest and the same signed snapshot.debian.org
 # timestamp as ../linux/Dockerfile (see there for the snapshot and Valid-Until notes);
 # only the package list differs per target. The Linux x86_64 builder is unchanged.
 #
@@ -10,6 +10,8 @@
 #   TARGET=x86_64-apple-darwin  the tree's hash-pinned native_clang 9.0.0 (an Ubuntu
 #                               18.04 build that needs libtinfo5), cctools and libtapi
 #                               are built by depends; the SDK comes from depends too
+#   TARGET=aarch64-apple-darwin the same packages and depends toolchain as x86_64-apple-darwin;
+#                               depends' ld64 signs every arm64 macOS executable ad hoc
 FROM docker.io/library/debian@sha256:c0a2ad73611131275b0e9a2e7544cfe3725f4268d4085d8c6f61fdd55aef7917
 
 ARG SNAPSHOT=20260824T000000Z
@@ -22,7 +24,7 @@ RUN set -eu; \
     case "${TARGET}" in \
       aarch64-linux-gnu) target_packages="gcc-9-aarch64-linux-gnu g++-9-aarch64-linux-gnu" ;; \
       x86_64-w64-mingw32) target_packages="g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix" ;; \
-      x86_64-apple-darwin) target_packages="libtinfo5 zlib1g-dev libbz2-dev xz-utils" ;; \
+      x86_64-apple-darwin|aarch64-apple-darwin) target_packages="libtinfo5 zlib1g-dev libbz2-dev xz-utils" ;; \
       *) echo "unknown TARGET '${TARGET}'" >&2; exit 2 ;; \
     esac; \
     rm -f /etc/apt/sources.list.d/*; \

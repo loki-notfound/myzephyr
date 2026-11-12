@@ -22,8 +22,8 @@ artifact expired. Usage: tag name outside v*-sec.*-my.*, run id not a number, no
 Rounds 16 and 17 (owner decisions: GNU readline, libusb and ZeroMQ ship with their source):
 the base commit carries synthetic contrib/depends/packages/<package>.mk pins; the artifacts
 link synthetic depends packages as the real builds do (readline on Linux and macOS, libusb on
-Linux, zeromq on all four) and carry their synthetic source tarballs, so the set has twelve
-files. Cases: present (twelve files, the three tarballs among those given to gh), a platform
+Linux, zeromq on all five) and carry their synthetic source tarballs, so the set has fourteen
+files. Cases: present (fourteen files, the three tarballs among those given to gh), a platform
 that does not link a package needs no tarball of it; refused, per package: the tarball
 missing from the set, its hash not the pin (set re-hashed consistently), a manifest naming
 the package without naming the tarball.
@@ -95,9 +95,10 @@ try:
     os.makedirs(os.path.join(R, ".github", "workflows"))
     open(os.path.join(R, "LICENSE"), "w").write("synthetic tree licence\n")
     # packages whose source goes with the release: file, licence file, platforms linking it (as in the real builds)
-    SRC = {"readline": ("readline-8.0.tar.gz", "COPYING", ("linux-x86_64", "linux-aarch64", "macos-x86_64"), "GNU readline"),
+    SRC = {"readline": ("readline-8.0.tar.gz", "COPYING", ("linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"), "GNU readline"),
            "libusb": ("libusb-1.0.27.tar.bz2", "COPYING", ("linux-x86_64", "linux-aarch64"), "libusb"),
-           "zeromq": ("zeromq-4.3.5.tar.gz", "LICENSE", ("linux-x86_64", "linux-aarch64", "macos-x86_64", "windows-x86_64"), "ZeroMQ (libzmq)")}
+           "zeromq": ("zeromq-4.3.5.tar.gz", "LICENSE", ("linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64", "windows-x86_64"),
+                      "ZeroMQ (libzmq)")}
     TB = {pkg: f"synthetic {pkg} source tarball, not the real one\n".encode() for pkg in SRC}
     PIN = {pkg: hashlib.sha256(b).hexdigest() for pkg, b in TB.items()}
     os.makedirs(os.path.join(R, "contrib", "depends", "packages"))
@@ -143,7 +144,8 @@ try:
     ctime = int(run("git", "-C", co, "log", "-1", "--format=%ct").stdout)
     version = f"2.3.0-{C[:9]}"
     PLAT = {"linux-x86_64": ("x86_64-unknown-linux-gnu", "zephyrd"), "linux-aarch64": ("aarch64-linux-gnu", "zephyrd"),
-            "macos-x86_64": ("x86_64-apple-darwin", "zephyrd"), "windows-x86_64": ("x86_64-w64-mingw32", "zephyrd.exe")}
+            "macos-x86_64": ("x86_64-apple-darwin", "zephyrd"), "macos-arm64": ("aarch64-apple-darwin", "zephyrd"),
+            "windows-x86_64": ("x86_64-w64-mingw32", "zephyrd.exe")}
     RUN_URL = f"https://github.com/{REPO}/actions/runs/{RUN}/attempts/1"
 
     def make_set(name, mutate=None):
@@ -267,9 +269,9 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
     # positive
     p, out, creates, log = scenario("dry run prints the command, creates nothing", args=["--dry-run", TAG, RUN], frag="dry run, nothing created")
     files = [l.strip() for l in out.splitlines() if l.startswith("  ")]
-    record("dry run lists twelve flat files (4 archives, 4 manifests, the three source tarballs, SHA256SUMS last)",
-           len(files) == 12 and files[-1] == "SHA256SUMS" and all(v[0] in files for v in SRC.values())
-           and sum(f.endswith(".manifest.json") for f in files) == 4 and not creates, files)
+    record("dry run lists fourteen flat files (5 archives, 5 manifests, the three source tarballs, SHA256SUMS last)",
+           len(files) == 14 and files[-1] == "SHA256SUMS" and all(v[0] in files for v in SRC.values())
+           and sum(f.endswith(".manifest.json") for f in files) == len(PLAT) and not creates, files)
     for plat in PLAT:
         pman = json.load(open(os.path.join(good_set, next(n for n in os.listdir(good_set) if n.endswith(f"{plat}.manifest.json")))))
         linked = sorted(pkg for pkg, v in SRC.items() if plat in v[2])
@@ -278,9 +280,9 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
     record("dry run prints gh release create --draft --verify-tag", "gh release create" in out and "--draft --verify-tag" in out)
     p, out, creates, log = scenario("real call creates the draft", frag="draft created")
     c = creates[0] if creates else []
-    record("gh release create with --draft --verify-tag and exactly the twelve files, the three tarballs among them", len(creates) == 1
+    record("gh release create with --draft --verify-tag and exactly the fourteen files, the three tarballs among them", len(creates) == 1
            and "--draft" in c and "--verify-tag" in c and "--title" in c
-           and sum(1 for x in c if os.path.isfile(x) and not x.endswith("notes.md")) == 12
+           and sum(1 for x in c if os.path.isfile(x) and not x.endswith("notes.md")) == 14
            and all(any(x.endswith("/" + v[0]) for x in c) for v in SRC.values()), c)
     notes = open(log + ".notes").read() if os.path.exists(log + ".notes") else ""
     record("notes: base, own commit not yet reported, platforms, verification, run, owner statement placeholder",

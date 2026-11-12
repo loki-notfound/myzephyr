@@ -4,7 +4,7 @@
 #
 #   run-builder.sh <docker|podman> <target> <source-dir> <log-dir>
 #
-# <target>: aarch64-linux-gnu, x86_64-w64-mingw32 or x86_64-apple-darwin.
+# <target>: aarch64-linux-gnu, x86_64-w64-mingw32, x86_64-apple-darwin or aarch64-apple-darwin.
 # <source-dir> is a clean, verified checkout (see ../verify-source.sh); it is mounted
 # at /src. <log-dir> must not exist yet. The container runs as the invoking non-root
 # user (Docker: --user uid:gid; rootless Podman: --userns=keep-id). Writes
@@ -15,8 +15,8 @@ export TZ=UTC
 
 engine=${1:-} target=${2:-} srcdir=${3:-} logdir=${4:-}
 case "$engine" in docker|podman) ;; *) echo "usage: $0 <docker|podman> <target> <source-dir> <log-dir>" >&2; exit 2 ;; esac
-case "$target" in aarch64-linux-gnu|x86_64-w64-mingw32|x86_64-apple-darwin) ;;
-  *) echo "target must be aarch64-linux-gnu, x86_64-w64-mingw32 or x86_64-apple-darwin" >&2; exit 2 ;; esac
+case "$target" in aarch64-linux-gnu|x86_64-w64-mingw32|x86_64-apple-darwin|aarch64-apple-darwin) ;;
+  *) echo "target must be aarch64-linux-gnu, x86_64-w64-mingw32, x86_64-apple-darwin or aarch64-apple-darwin" >&2; exit 2 ;; esac
 test -d "$srcdir/.git" || test -f "$srcdir/.git" || { echo "$srcdir is not a git checkout" >&2; exit 2; }
 if [ -e "$logdir" ]; then echo "$logdir exists; refusing to overwrite" >&2; exit 2; fi
 here=$(cd "$(dirname "$0")" && pwd)

@@ -9,9 +9,9 @@
       --base-fingerprint FPR --maintainer-fingerprint FPR
       --source-identity FILE --static-report FILE --embedded-report FILE --recipe-dir DIR [--report FILE]
 
-T: aarch64-linux-gnu, x86_64-apple-darwin or x86_64-w64-mingw32. The same rule as
+T: aarch64-linux-gnu, x86_64-apple-darwin, aarch64-apple-darwin or x86_64-w64-mingw32. The same rule as
 verify-artifact.py: every value after --artifact comes from the verifier. --static-report is
-the verifier's own check-elf.sh --arch aarch64 / check-macho.py / check-pe.py report of the
+the verifier's own check-elf.sh --arch aarch64 / check-macho.py [--arch arm64] / check-pe.py report of the
 downloaded binary, --embedded-report its own check-embedded.py report, --recipe-dir
 contrib/myzephyr/cross of its own checkout. The workflow, source and base checks are
 verify-artifact.py's own code (imported), including the run-identity table and the
@@ -47,16 +47,19 @@ va = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(va)
 
 TARGETS = {"aarch64-linux-gnu": ("elf", "zephyrd"), "x86_64-apple-darwin": ("macho", "zephyrd"),
-           "x86_64-w64-mingw32": ("pe", "zephyrd.exe")}
+           "aarch64-apple-darwin": ("macho", "zephyrd"), "x86_64-w64-mingw32": ("pe", "zephyrd.exe")}
 SEEDS = ["142.93.255.216:17766", "142.93.98.116:17766", "24.199.101.125:17766", "85.215.93.176:17766"]
 # fixed values each target's own static report must show (the checkers fail otherwise too)
 FIXED = {
-    "elf": {"elf_interpreter": "/lib/ld-linux-aarch64.so.1", "elf_rpath_runpath": "none",
-            "elf_needed": "ld-linux-aarch64.so.1 libc.so.6 libm.so.6 libpthread.so.0",
-            "elf_max_glibc_allowed": "GLIBC_2.29", "elf_cxx_version_needs": "none"},
-    "macho": {"macho_cputype": "0x1000007", "macho_filetype": "2", "macho_rpath": "none",
-              "macho_dylinker": "/usr/lib/dyld"},
-    "pe": {"pe_magic": "0x20b", "pe_machine": "0x8664", "pe_subsystem": "3"},
+    "aarch64-linux-gnu": {"elf_interpreter": "/lib/ld-linux-aarch64.so.1", "elf_rpath_runpath": "none",
+                          "elf_needed": "ld-linux-aarch64.so.1 libc.so.6 libm.so.6 libpthread.so.0",
+                          "elf_max_glibc_allowed": "GLIBC_2.29", "elf_cxx_version_needs": "none"},
+    "x86_64-apple-darwin": {"macho_cputype": "0x1000007", "macho_filetype": "2", "macho_rpath": "none",
+                            "macho_dylinker": "/usr/lib/dyld"},
+    "aarch64-apple-darwin": {"macho_cputype": "0x100000c", "macho_filetype": "2", "macho_rpath": "none",
+                             "macho_dylinker": "/usr/lib/dyld", "macho_code_signature": "present",
+                             "macho_code_signature_kind": "adhoc,linker-signed"},
+    "x86_64-w64-mingw32": {"pe_magic": "0x20b", "pe_machine": "0x8664", "pe_subsystem": "3"},
 }
 REPORT_KEYS = {"elf": ("elf_sha256", "elf_size", "elf_checks"), "macho": ("macho_sha256", "macho_size", "macho_checks"),
                "pe": ("pe_sha256", "pe_size", "pe_checks")}
@@ -99,7 +102,7 @@ class CrossVerifier(va.Verifier):
         self.eq("static", f"trusted report {sha_key}", mine.get(sha_key), digest)
         self.eq("static", f"trusted report {size_key}", mine.get(size_key), str(size))
         self.eq("static", f"trusted report {checks_key}", mine.get(checks_key), "passed")
-        for key, want in FIXED[self.fmt].items():
+        for key, want in FIXED[a.target].items():
             self.eq("static", f"trusted report {key} (fixed for {a.target})", mine.get(key), want)
         sr = m["static_report"]
         self.eq("static", "static_report.format", sr["format"], self.fmt)

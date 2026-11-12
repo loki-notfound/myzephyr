@@ -6,7 +6,8 @@
                          --recipe-dir D --out F (--checkout-record F | --local)
 
 T is aarch64-linux-gnu (ELF, check-elf.sh --arch aarch64), x86_64-apple-darwin (Mach-O,
-check-macho.py) or x86_64-w64-mingw32 (PE, check-pe.py). --embedded-report is
+check-macho.py), aarch64-apple-darwin (Mach-O, check-macho.py --arch arm64) or
+x86_64-w64-mingw32 (PE, check-pe.py). --embedded-report is
 check-embedded.py's. Source, base, workflow, builder and recipe records are made as by
 make-manifest.py (whose helpers are reused). The binary is never executed here: its version
 is the embedded string; the native runtime job runs it.
@@ -34,7 +35,7 @@ spec.loader.exec_module(mm)
 
 SCHEMA = "myzephyr/daemon-cross-build-manifest/2"
 TARGETS = {"aarch64-linux-gnu": ("elf", "zephyrd"), "x86_64-apple-darwin": ("macho", "zephyrd"),
-           "x86_64-w64-mingw32": ("pe", "zephyrd.exe")}
+           "aarch64-apple-darwin": ("macho", "zephyrd"), "x86_64-w64-mingw32": ("pe", "zephyrd.exe")}
 REPORT_KEYS = {"elf": ("elf_sha256", "elf_checks"), "macho": ("macho_sha256", "macho_checks"),
                "pe": ("pe_sha256", "pe_checks")}
 

@@ -2,15 +2,15 @@
 # Cross-build zephyrd (CMake target "daemon", Release) with contrib/depends inside the
 # cross builder image (contrib/myzephyr/cross/Dockerfile). Runs as a non-root user.
 #
-#   build-in-container.sh <aarch64-linux-gnu|x86_64-w64-mingw32|x86_64-apple-darwin>
+#   build-in-container.sh <aarch64-linux-gnu|x86_64-w64-mingw32|x86_64-apple-darwin|aarch64-apple-darwin>
 #
 # Expects the source at /src and a writable, empty log directory at /logs. One target
 # per checkout: the depends prefix is per host triplet, and an existing build
 # directory is never reused.
 #
 # Compilers: aarch64 uses aarch64-linux-gnu-gcc-9/g++-9; Windows uses the posix
-# thread model (x86_64-w64-mingw32-gcc-posix/g++-posix); macOS uses depends'
-# native_clang with the darwin SDK (hosts/darwin.mk). They are passed to depends as
+# thread model (x86_64-w64-mingw32-gcc-posix/g++-posix); macOS (x86_64 and arm64) uses
+# depends' native_clang with the darwin SDK (hosts/darwin.mk). They are passed to depends as
 # make variables, so no depends file is changed.
 #
 # Environment: SOURCE_DATE_EPOCH (required), JOBS (1..4, default 4). Every step
@@ -27,10 +27,10 @@ case "$target" in
   x86_64-w64-mingw32)
     tool_args=("x86_64_mingw32_CC=x86_64-w64-mingw32-gcc-posix" "x86_64_mingw32_CXX=x86_64-w64-mingw32-g++-posix")
     cc_id=(x86_64-w64-mingw32-gcc-posix x86_64-w64-mingw32-g++-posix) exe=zephyrd.exe ;;
-  x86_64-apple-darwin)
+  x86_64-apple-darwin|aarch64-apple-darwin)
     tool_args=()
     cc_id=() exe=zephyrd ;;
-  *) echo "usage: $0 aarch64-linux-gnu|x86_64-w64-mingw32|x86_64-apple-darwin" >&2; exit 2 ;;
+  *) echo "usage: $0 aarch64-linux-gnu|x86_64-w64-mingw32|x86_64-apple-darwin|aarch64-apple-darwin" >&2; exit 2 ;;
 esac
 : "${SOURCE_DATE_EPOCH:?SOURCE_DATE_EPOCH must be set to the source commit time}"
 export SOURCE_DATE_EPOCH
@@ -80,9 +80,9 @@ step() {
 } > "$logs/toolchain.txt"
 
 step depends make -C contrib/depends HOST="$target" -j"$JOBS" "${tool_args[@]}"
-if [ "$target" = x86_64-apple-darwin ]; then
-  echo "native clang: $("$prefix/native/bin/clang" --version | sed -n 1p)" >> "$logs/toolchain.txt"
-fi
+case "$target" in *-apple-darwin)
+  echo "native clang: $("$prefix/native/bin/clang" --version | sed -n 1p)" >> "$logs/toolchain.txt" ;;
+esac
 step configure cmake -S . -B "$build_dir" \
   -DCMAKE_TOOLCHAIN_FILE="$src/$prefix/share/toolchain.cmake" -DCMAKE_SKIP_RPATH=ON
 step build cmake --build "$build_dir" --target daemon --parallel "$JOBS"

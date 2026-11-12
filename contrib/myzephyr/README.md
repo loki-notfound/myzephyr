@@ -75,8 +75,8 @@ the tag locally): with the tag present the build would print `<version>-release`
 | `linux/run-builder.sh` | builds the image and runs the build as a non-root user (Docker or rootless Podman) |
 | `linux/build-in-container.sh` | `contrib/depends` and CMake inside the image; `release` (target `daemon`, `CMAKE_SKIP_RPATH=ON`) or `tests` (`TESTS=1`, Debug, `unit_tests`, `test_notifier`) |
 | `linux/run-unit-tests.sh` | runs the built `unit_tests` natively (`native`, used by CI) or in the image (`docker`/`podman`, diagnosis); records the environment (root filesystem device and the sysfs rotational attributes, binary hashes, interpreter and libraries), the test inventory, log and XML report; a missing prerequisite stops before any test is listed or run |
-| `cross/Dockerfile`, `cross/run-builder.sh`, `cross/build-in-container.sh` | cross builders from the same base image digest and snapshot as `linux/`: Linux AArch64 (`aarch64-linux-gnu`, the snapshot's GCC 9.3 cross compiler with one hash-guarded header fix, see "Other platforms"), macOS x86_64 (`x86_64-apple-darwin`, depends' hash-pinned clang 9.0.0 and Xcode 12.2 SDK) and Windows x86_64 (`x86_64-w64-mingw32`, MinGW-w64 with the posix thread model); target `daemon`, Release |
-| `check-macho.py`, `check-pe.py` | static checks of the macOS Mach-O and the Windows PE binary with fixed expectations (architecture, minimum OS, subsystem, linked libraries); pure Python, nothing is executed |
+| `cross/Dockerfile`, `cross/run-builder.sh`, `cross/build-in-container.sh` | cross builders from the same base image digest and snapshot as `linux/`: Linux AArch64 (`aarch64-linux-gnu`, the snapshot's GCC 9.3 cross compiler with one hash-guarded header fix, see "Other platforms"), macOS x86_64 (`x86_64-apple-darwin`, depends' hash-pinned clang 9.0.0 and Xcode 12.2 SDK), macOS arm64 (`aarch64-apple-darwin`, the same packages and depends toolchain; depends' ld64 signs every arm64 macOS executable ad hoc) and Windows x86_64 (`x86_64-w64-mingw32`, MinGW-w64 with the posix thread model); target `daemon`, Release |
+| `check-macho.py`, `check-pe.py` | static checks of the macOS Mach-O (x86_64; arm64 with `--arch arm64`, which also requires the ad-hoc code signature and checks its page hashes against the file) and the Windows PE binary with fixed expectations (architecture, minimum OS, subsystem, linked libraries); pure Python, nothing is executed |
 | `check-embedded.py` | the expected version string and the four mainnet IP seeds are embedded (used where the binary cannot run on the build machine) |
 | `make-cross-manifest.py`, `manifest-cross.schema.json` | build manifest of a cross build (`myzephyr/daemon-cross-build-manifest/2`); the target fixes the format and binary name |
 | `run-identity.py` | the run-identity table above: `check` as the first step of every job (writes `MYZ_PULL_REQUEST`), and the module the manifest writers and verifiers use |
@@ -94,15 +94,15 @@ the tag locally): with the tag present the build would print `<version>-release`
 | `release/draft-release.sh`, `release/check-release-set.py` | run locally by the owner after the tag exists, never in CI: checks the run, the tag (`verify-source.sh --release-tag`), GitHub's digest of the release-set artifact and the set itself, then makes a draft release (`--dry-run` prints the command instead); see "Release set" |
 | `release/compare-pr-run.py` | on a push run: the binary hashes of the pull-request run of the same commit, read from its hash marker artifacts' names, side by side in the run summary; reported, never a gate |
 | `runtime/Dockerfile` | runtime-only Debian 11 arm64 userland (the arm64 manifest of the Linux builder base's index, python3 from the same snapshot) for a second offline start of the AArch64 binary |
-| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O and PE files are made); `run-identity-selftest.py` (each row of the table and one changed value per case) and `ci-checkout-selftest.sh` (a local origin with tags and merge refs over a file URL); `link-inventory-selftest.sh` (a small tree linked by the runner's gcc and GNU ld) and `release-set-selftest.py` (synthetic artifacts; also the run comparison against a stub API) |
+| `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O (arm64 with an ad-hoc signature computed over the synthetic file) and PE files are made); `run-identity-selftest.py` (each row of the table and one changed value per case) and `ci-checkout-selftest.sh` (a local origin with tags and merge refs over a file URL); `link-inventory-selftest.sh` (a small tree linked by the runner's gcc and GNU ld) and `release-set-selftest.py` (synthetic artifacts; also the run comparison against a stub API) |
 | `keys/zephyr-backports-release.asc` | public key that signs the zephyr-backports tags |
 | `keys/myzephyr-maintainer.asc` | public key that signs the own commits |
 
 ## Release set
 
-The `package` job needs every build and runtime job of the run. It downloads the four
+The `package` job needs every build and runtime job of the run. It downloads the five
 artifacts, verifies each again with its own checkout and checks, and makes one archive per
-platform (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `windows-x86_64`) with the fixed
+platform (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-arm64`, `windows-x86_64`) with the fixed
 layout `zephyrd-<version string>-<platform>/`: the binary, the tree's `LICENSE`,
 `THIRD-PARTY-LICENSES/` and `README.txt`. File names carry the version string the binary
 reports, never a tag. Linux and macOS get `.tar.gz` (GNU tar `--format=gnu --sort=name
@@ -114,7 +114,7 @@ binary hashes, the verified build manifest, source, base, own commits, the run, 
 hosted runners tested, the licence list and the source tarballs published with it.
 `SHA256SUMS` lists the archives, the manifests and those source tarballs, never itself. The
 source tarballs of GNU readline (linked into the Linux and macOS daemons), libusb (Linux) and
-ZeroMQ (all four) are published as separate files, each exactly as depends fetched and hash-checked it in the build (carried in the
+ZeroMQ (all five) are published as separate files, each exactly as depends fetched and hash-checked it in the build (carried in the
 build artifact, never downloaded again), and named in those manifests and README files. The set is one artifact, `release-set-<commit>`, kept 90 days on pushes to
 `my/**`.
 
@@ -239,30 +239,36 @@ verifier accepts as CI provenance.
 ## Other platforms
 
 Upstream v2.3.0 ships daemons for Linux x86_64, Linux AArch64, macOS x86_64 (minimum
-10.13) and Windows x86_64. The workflow builds Linux AArch64, macOS x86_64 and Windows
-x86_64 with `contrib/depends` in the cross builder (`cross-build`) and inspects them
-statically: an AArch64 ELF position-independent executable with the interpreter
+10.13) and Windows x86_64; it ships no macOS arm64 daemon, which this build adds. The
+workflow builds Linux AArch64, macOS x86_64, macOS arm64 and Windows x86_64 with
+`contrib/depends` in the cross builder (`cross-build`) and inspects them statically: an AArch64 ELF position-independent executable with the interpreter
 `/lib/ld-linux-aarch64.so.1`, upstream's NEEDED set, glibc symbol versions at most 2.29
 and no RPATH/RUNPATH or shared C++ runtime (`check-elf.sh --arch aarch64`); a thin x86_64
-Mach-O with minimum macOS 10.13.0 that links only OS frameworks and libc++/libSystem; and
+Mach-O with minimum macOS 10.13.0 that links only OS frameworks and libc++/libSystem; a
+thin arm64 Mach-O with the same libraries and the same declared minimum (10.13.0, in
+`LC_BUILD_VERSION`; depends' `OSX_MIN_VERSION` is one value for both architectures, and Apple
+Silicon Macs start at macOS 11) that carries the ad-hoc, linker-signed code signature depends'
+ld64 writes for every arm64 macOS executable (Apple Silicon does not run an unsigned arm64
+binary; `check-macho.py --arch arm64` recomputes its page hashes); and
 a PE32+ x86-64 console executable that imports only Windows system DLLs (no MinGW
 runtime DLL). The binary is not executed on the build machine: the
 expected version and the mainnet seeds are checked as embedded strings, and the manifest
 carries no version output.
 
 `native-runtime` then takes each artifact to a hosted runner of its platform
-(`ubuntu-24.04-arm`, `macos-15-intel`, `windows-2022`), verifies the source and the artifact itself like the
+(`ubuntu-24.04-arm`, `macos-15-intel`, `macos-15` on Apple Silicon, `windows-2022`), verifies the source and the artifact itself like the
 Linux consumer jobs, runs `--version`, the strict offline start and the default discovery
 with `zephyrd-check.py`. On Windows the clean-stop request is `CTRL_BREAK_EVENT` to the
 daemon, started in its own process group, which zephyrd handles like Ctrl+C; on Linux and
 macOS it is SIGTERM. A daemon that has to be killed is a failed cleanup everywhere.
 
 These runners prove a start on those images only (Ubuntu 24.04 on AArch64, macOS 15 on
-Intel, Windows Server 2022). On the AArch64 runner the binary also gets a strict offline
+Intel, macOS 15 on Apple Silicon, Windows Server 2022). On the AArch64 runner the binary also gets a strict offline
 start in a runtime-only Debian 11 arm64 userland (glibc 2.31, `runtime/Dockerfile`), as
 the x86_64 binary does in the Debian 11 builder userland; the job records that image's
-glibc version. Other AArch64 distributions, macOS 10.13 to 14, Apple Silicon (Rosetta)
-and Windows 10 are not covered.
+glibc version. Other AArch64 distributions, macOS 10.13 to 14 (Intel) and 11 to 14 (Apple
+Silicon), the x86_64 binary under Rosetta and Windows 10 are not covered. Neither macOS binary
+is notarized; the arm64 one carries only the linker's ad-hoc signature.
 
 Linux AArch64 compiler header: the snapshot's GCC 9.3 cross compiler
 (`libgcc-9-dev-arm64-cross` 9.3.0-22cross1) ships an `arm_acle.h` whose `extern "C"`

@@ -7,7 +7,7 @@
 
 Used by draft-release.sh after it has verified the run, the tag and GitHub's digest of the
 artifact. Checks, each fatal (exit 1):
-  files     D holds only regular files: exactly SHA256SUMS, four archives, four manifests
+  files     D holds only regular files: exactly SHA256SUMS, five archives, five manifests
             (one per platform) and the source tarballs the manifests name, plain names;
             SHA256SUMS lists every other file once, never itself, and every hash matches;
   manifest  each zephyrd-<version>-<platform>.manifest.json is strict JSON, valid against
@@ -49,7 +49,8 @@ _spec = importlib.util.spec_from_file_location("verify_artifact", os.path.join(o
 va = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(va)
 PLATFORMS = {"linux-x86_64": ("zephyrd", "tar.gz"), "linux-aarch64": ("zephyrd", "tar.gz"),
-             "macos-x86_64": ("zephyrd", "tar.gz"), "windows-x86_64": ("zephyrd.exe", "zip")}
+             "macos-x86_64": ("zephyrd", "tar.gz"), "macos-arm64": ("zephyrd", "tar.gz"),
+             "windows-x86_64": ("zephyrd.exe", "zip")}
 SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SOURCE_WITH_RELEASE = ("readline", "libusb", "zeromq")
 
@@ -203,7 +204,7 @@ def check(a):
     expected = {"SHA256SUMS"} | {m["archive"]["name"] for m in mans.values()} | {m["manifest_name"] for m in mans.values()} | set(named)
     if set(names) != expected:
         raise Refused(f"the set holds {sorted(set(names) - expected)} beyond, or lacks {sorted(expected - set(names))} of, "
-                      "SHA256SUMS, four archives, four manifests and the named source tarballs")
+                      "SHA256SUMS, five archives, five manifests and the named source tarballs")
     return names, mans, vs
 
 
@@ -239,7 +240,8 @@ def notes(a, mans, vs):
               f"`{m0['own_commit_signer_primary_fingerprint']}`, see the repository README).",
               "2. `sha256sum -c SHA256SUMS`", f"3. `git verify-tag {a.tag}` in a clone; the tag points at `{a.commit}`.",
               "4. Each `*.manifest.json` names the binary's hash, the build manifest and the run.", "",
-              "macOS: not notarized; Windows: not Authenticode-signed, like upstream's own builds. Each archive's "
+              "macOS: not notarized (arm64: only the linker's ad-hoc signature); Windows: not Authenticode-signed, "
+              "like upstream's own builds. Each archive's "
               "`README.txt` says how to replace an upstream `zephyrd` (stop, keep the data directory, swap the binary, "
               "start with the same paths, ports and options).", "",
               "Licences: each archive holds `LICENSE` and `THIRD-PARTY-LICENSES/` (texts of everything linked into that "

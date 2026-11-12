@@ -1,5 +1,5 @@
-# Build, test and package zephyrd for Linux x86_64, Linux AArch64, macOS x86_64 and
-# Windows x86_64 from one commit.
+# Build, test and package zephyrd for Linux x86_64, Linux AArch64, macOS x86_64, macOS arm64
+# and Windows x86_64 from one commit.
 #
 # Runs (contrib/myzephyr/run-identity.py holds the table; anything else fails in the
 # first step of every job):
@@ -34,18 +34,20 @@
 #                     environment record with binary hashes and the root filesystem)
 #   runtime-offline   strict offline start on ubuntu-24.04 and in the Debian 11 builder userland
 #   bootstrap         default public peer discovery from an empty directory (no peer options)
-#   cross-build       Linux AArch64, macOS x86_64 and Windows x86_64 cross builds in the
-#                     pinned cross builder image (contrib/myzephyr/cross; for AArch64 one
-#                     hash-guarded GCC header fix, see its Dockerfile), static checks of the
-#                     binary format and embedded strings, manifest (nothing is executed)
-#   package           needs every job above: downloads and verifies the four artifacts again,
+#   cross-build       Linux AArch64, macOS x86_64, macOS arm64 and Windows x86_64 cross builds
+#                     in the pinned cross builder image (contrib/myzephyr/cross; for AArch64
+#                     one hash-guarded GCC header fix, see its Dockerfile), static checks of the
+#                     binary format (for macOS arm64 also its ad-hoc code signature) and
+#                     embedded strings, manifest (nothing is executed)
+#   package           needs every job above: downloads and verifies the five artifacts again,
 #                     packs one archive per platform (binary, LICENSE, THIRD-PARTY-LICENSES from
 #                     the build's link inventory, README.txt), a manifest per platform and
 #                     SHA256SUMS (contrib/myzephyr/release/make-release-set.py) and uploads
 #                     them as the release set (90 days on pushes to my/**); on a push it also
 #                     reports the binary hashes of the pull-request run of the same commit
 #   native-runtime    each cross artifact on a hosted runner of its platform
-#                     (ubuntu-24.04-arm, macos-15-intel, windows-2022): own source
+#                     (ubuntu-24.04-arm, macos-15-intel, macos-15 on Apple Silicon,
+#                     windows-2022): own source
 #                     verification and static checks, verify-cross-artifact.py, the platform
 #                     self-test, --version, strict offline start (for AArch64 also in a
 #                     runtime-only Debian 11 arm64 userland), default discovery
@@ -454,7 +456,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [aarch64-linux-gnu, x86_64-apple-darwin, x86_64-w64-mingw32]
+        target: [aarch64-linux-gnu, x86_64-apple-darwin, aarch64-apple-darwin, x86_64-w64-mingw32]
     env:
       TARGET: ${{ matrix.target }}
     steps:
@@ -488,6 +490,7 @@ jobs:
           case "$TARGET" in
             aarch64-linux-gnu) bin=zephyrd; src-cross/contrib/myzephyr/check-elf.sh --arch aarch64 "src-cross/build/release-$TARGET/bin/$bin" "$out/static-report.txt" ;;
             x86_64-apple-darwin) bin=zephyrd; python3 -I src-cross/contrib/myzephyr/check-macho.py "src-cross/build/release-$TARGET/bin/$bin" "$out/static-report.txt" ;;
+            aarch64-apple-darwin) bin=zephyrd; python3 -I src-cross/contrib/myzephyr/check-macho.py --arch arm64 "src-cross/build/release-$TARGET/bin/$bin" "$out/static-report.txt" ;;
             x86_64-w64-mingw32) bin=zephyrd.exe; python3 -I src-cross/contrib/myzephyr/check-pe.py "src-cross/build/release-$TARGET/bin/$bin" "$out/static-report.txt" ;;
           esac
           python3 -I src-cross/contrib/myzephyr/check-embedded.py "src-cross/build/release-$TARGET/bin/$bin" \
@@ -522,7 +525,7 @@ jobs:
         id: hash
         run: |
           case "$TARGET" in aarch64-linux-gnu) plat=linux-aarch64 bin=zephyrd ;; x86_64-apple-darwin) plat=macos-x86_64 bin=zephyrd ;;
-            x86_64-w64-mingw32) plat=windows-x86_64 bin=zephyrd.exe ;; esac
+            aarch64-apple-darwin) plat=macos-arm64 bin=zephyrd ;; x86_64-w64-mingw32) plat=windows-x86_64 bin=zephyrd.exe ;; esac
           mkdir -p "$RUNNER_TEMP/marker"
           ( cd "$RUNNER_TEMP/out" && sha256sum "$bin" ) | tee "$RUNNER_TEMP/marker/binary-sha256.txt"
           echo "platform=$plat" >> "$GITHUB_OUTPUT"
@@ -552,6 +555,10 @@ jobs:
             py: python3
           - target: x86_64-apple-darwin
             runner: macos-15-intel
+            exe: zephyrd
+            py: python3
+          - target: aarch64-apple-darwin
+            runner: macos-15
             exe: zephyrd
             py: python3
           - target: x86_64-w64-mingw32
@@ -627,6 +634,7 @@ jobs:
           case "$TARGET" in
             aarch64-linux-gnu) bash tooling/contrib/myzephyr/check-elf.sh --arch aarch64 "art/$EXE" "$v/static-report.txt" ;;
             x86_64-apple-darwin) "$PY" -I tooling/contrib/myzephyr/check-macho.py "art/$EXE" "$v/static-report.txt" ;;
+            aarch64-apple-darwin) "$PY" -I tooling/contrib/myzephyr/check-macho.py --arch arm64 "art/$EXE" "$v/static-report.txt" ;;
             x86_64-w64-mingw32) "$PY" -I tooling/contrib/myzephyr/check-pe.py "art/$EXE" "$v/static-report.txt" ;;
           esac
           "$PY" -I tooling/contrib/myzephyr/check-embedded.py "art/$EXE" "$(tr -d '\r\n' < "$v/expected-version.txt")" "$v/embedded-report.txt"
@@ -691,7 +699,7 @@ jobs:
           if-no-files-found: error
 
   package:
-    name: package the release set (four archives, manifests, SHA256SUMS)
+    name: package the release set (five archives, manifests, SHA256SUMS)
     needs: [tooling-selftest, release-build, unit-tests, runtime-offline, bootstrap, cross-build, native-runtime]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -717,7 +725,7 @@ jobs:
             --out "$v/source-identity.txt"
           python3 -I tooling/contrib/myzephyr/zephyrd-check.py expected-version --checkout tooling > "$v/expected-version.txt"
           cat "$v/expected-version.txt"
-      - name: Download the four build artifacts of this run
+      - name: Download the five build artifacts of this run
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: zephyrd-*-${{ env.MYZ_BUILD_SHA }}
@@ -737,11 +745,12 @@ jobs:
           python3 -I tooling/contrib/myzephyr/verify-artifact.py --artifact "$a" "${common[@]}" \
             --elf-report "$v/elf-report-linux-x86_64.txt" --recipe-dir tooling/contrib/myzephyr/linux \
             --report "$v/verify-linux-x86_64.json"
-          for t in aarch64-linux-gnu x86_64-apple-darwin x86_64-w64-mingw32; do
+          for t in aarch64-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-w64-mingw32; do
             a=art/zephyrd-$t-$MYZ_BUILD_SHA
             case "$t" in
               aarch64-linux-gnu) b=zephyrd; tooling/contrib/myzephyr/check-elf.sh --arch aarch64 "$a/$b" "$v/static-$t.txt" ;;
               x86_64-apple-darwin) b=zephyrd; python3 -I tooling/contrib/myzephyr/check-macho.py "$a/$b" "$v/static-$t.txt" ;;
+              aarch64-apple-darwin) b=zephyrd; python3 -I tooling/contrib/myzephyr/check-macho.py --arch arm64 "$a/$b" "$v/static-$t.txt" ;;
               x86_64-w64-mingw32) b=zephyrd.exe; python3 -I tooling/contrib/myzephyr/check-pe.py "$a/$b" "$v/static-$t.txt" ;;
             esac
             python3 -I tooling/contrib/myzephyr/check-embedded.py "$a/$b" "$ver" "$v/embedded-$t.txt"
@@ -756,6 +765,7 @@ jobs:
             --artifact "linux-x86_64=art/zephyrd-linux-x86_64-$MYZ_BUILD_SHA" \
             --artifact "linux-aarch64=art/zephyrd-aarch64-linux-gnu-$MYZ_BUILD_SHA" \
             --artifact "macos-x86_64=art/zephyrd-x86_64-apple-darwin-$MYZ_BUILD_SHA" \
+            --artifact "macos-arm64=art/zephyrd-aarch64-apple-darwin-$MYZ_BUILD_SHA" \
             --artifact "windows-x86_64=art/zephyrd-x86_64-w64-mingw32-$MYZ_BUILD_SHA"
           { echo "### Release set of $MYZ_BUILD_SHA"; echo; echo '```'; cat release-set/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Compare with the pull-request run of the same commit (reported, not a gate)

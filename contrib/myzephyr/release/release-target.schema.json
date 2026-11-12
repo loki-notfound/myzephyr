@@ -13,8 +13,8 @@
   },
   "properties": {
     "schema": {"const": "myzephyr/daemon-release-target/2"},
-    "platform": {"enum": ["linux-x86_64", "linux-aarch64", "macos-x86_64", "windows-x86_64"]},
-    "target": {"enum": ["x86_64-unknown-linux-gnu", "aarch64-linux-gnu", "x86_64-apple-darwin", "x86_64-w64-mingw32"]},
+    "platform": {"enum": ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64", "windows-x86_64"]},
+    "target": {"enum": ["x86_64-unknown-linux-gnu", "aarch64-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-w64-mingw32"]},
     "version_string": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{9}$"},
     "archive": {
       "type": "object",

@@ -13,7 +13,9 @@ Own commits above the base:
 - A second fallback node, `85.215.93.176:17766`, is added to the mainnet fallback
   seeds. The maintainer vouches for it as a reliable fallback.
 - Build and test tooling: `contrib/myzephyr/` and
-  `.github/workflows/daemon-release-baseline.yml`.
+  `.github/workflows/daemon-release-baseline.yml`. It builds the daemon for Linux x86_64,
+  Linux AArch64, macOS x86_64, macOS arm64 (Apple Silicon; upstream ships no such daemon)
+  and Windows x86_64.
 - The GoogleTest recipe of `contrib/depends` (used only for unit-test builds) uses the
   compiler and tools depends selected instead of assuming they are in its native tool
   directory, and builds the requested Debug type.

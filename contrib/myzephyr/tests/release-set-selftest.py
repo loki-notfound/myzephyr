@@ -4,7 +4,7 @@ invented licence texts and a small git checkout made here). Not a real release s
 
   release-set-selftest.py <work-dir>      (<work-dir> must not exist)
 
-Valid set: four archives and four manifests, SHA256SUMS over exactly those eight files,
+Valid set: five archives and five manifests, SHA256SUMS over exactly those ten files,
 fixed layout zephyrd-<version>-<platform>/ with the binary (0755), LICENSE,
 THIRD-PARTY-LICENSES/ and README.txt; tar members with time SOURCE_DATE_EPOCH, owner 0:0;
 gzip without name and time; zip entries with fixed time and modes; every manifest valid
@@ -19,7 +19,7 @@ Round 16: inputs made in the build tree ("build:<dir>") need no text, the owners
 objects' sources ("compiled" rows) do; a source-header statement naming LICENSE_1_0.txt gets
 an INDEX.txt note pointing at the text of that name. Source tarballs (owner decisions: GNU
 readline, libusb, ZeroMQ): the artifacts link synthetic depends packages as the real builds do
-(readline on Linux and macOS, libusb on Linux, zeromq on all four) and carry their synthetic
+(readline on Linux and macOS, libusb on Linux, zeromq on all five) and carry their synthetic
 source tarballs; the set holds each once as a flat file, in SHA256SUMS, in the manifests and
 README.txt files of the platforms that link it, not in the others'. Per package: present;
 linked without the tarball, a tarball whose hash is not the pin, no source-tarball row (each
@@ -49,7 +49,8 @@ if os.path.lexists(work):
 os.makedirs(work)
 results = []
 PLAT = {"linux-x86_64": ("x86_64-unknown-linux-gnu", "zephyrd"), "linux-aarch64": ("aarch64-linux-gnu", "zephyrd"),
-        "macos-x86_64": ("x86_64-apple-darwin", "zephyrd"), "windows-x86_64": ("x86_64-w64-mingw32", "zephyrd.exe")}
+        "macos-x86_64": ("x86_64-apple-darwin", "zephyrd"), "macos-arm64": ("aarch64-apple-darwin", "zephyrd"),
+        "windows-x86_64": ("x86_64-w64-mingw32", "zephyrd.exe")}
 
 
 def record(name, ok, detail=""):
@@ -74,9 +75,10 @@ src_tarball = b"synthetic dep source"
 open(os.path.join(co, "contrib", "depends", "packages", "dep.mk"), "w").write(
     f"$(package)_version=1.0\n$(package)_sha256_hash={hashlib.sha256(src_tarball).hexdigest()}\n")
 # packages whose source goes with the release: file, licence file, platforms linking it (as in the real builds)
-SRC = {"readline": ("readline-8.0.tar.gz", "COPYING", ("linux-x86_64", "linux-aarch64", "macos-x86_64"), "GNU readline"),
+SRC = {"readline": ("readline-8.0.tar.gz", "COPYING", ("linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64"), "GNU readline"),
        "libusb": ("libusb-1.0.27.tar.bz2", "COPYING", ("linux-x86_64", "linux-aarch64"), "libusb"),
-       "zeromq": ("zeromq-4.3.5.tar.gz", "LICENSE", ("linux-x86_64", "linux-aarch64", "macos-x86_64", "windows-x86_64"), "ZeroMQ (libzmq)")}
+       "zeromq": ("zeromq-4.3.5.tar.gz", "LICENSE", ("linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64", "windows-x86_64"),
+                  "ZeroMQ (libzmq)")}
 TB = {pkg: f"synthetic {pkg} source tarball, not the real one\n".encode() for pkg in SRC}
 PIN = {pkg: hashlib.sha256(b).hexdigest() for pkg, b in TB.items()}
 RL_PIN = PIN["readline"]
@@ -180,7 +182,7 @@ record("valid set written", p.returncode == 0, p.stderr[-400:])
 names = sorted(os.listdir(out)) if os.path.isdir(out) else []
 want = sorted([f"zephyrd-{vs}-{pl}.{'zip' if pl.startswith('windows') else 'tar.gz'}" for pl in PLAT] +
               [f"zephyrd-{vs}-{pl}.manifest.json" for pl in PLAT] + ["SHA256SUMS"] + [v[0] for v in SRC.values()])
-record("exactly four archives, four manifests, the three source tarballs and SHA256SUMS", names == want, names)
+record("exactly five archives, five manifests, the three source tarballs and SHA256SUMS", names == want, names)
 if names == want:
     sums = [l.split("  ") for l in open(os.path.join(out, "SHA256SUMS")).read().splitlines()]
     for pkg, (fname, _, _, _) in SRC.items():
@@ -341,7 +343,7 @@ for pkg, (fname, _, plats, _) in SRC.items():
     p, outv = run(f"{pkg}-not-linked", dv)
     ms = [json.load(open(os.path.join(outv, f"zephyrd-{vs}-{pl}.manifest.json"))) for pl in PLAT] if p.returncode == 0 else []
     record(f"{pkg}-not-linked: exit 0, no tarball of it in the set or any manifest, licences complete",
-           p.returncode == 0 and fname not in os.listdir(outv) and len(ms) == 4
+           p.returncode == 0 and fname not in os.listdir(outv) and len(ms) == len(PLAT)
            and all(pkg not in [t["package"] for t in m["source_tarballs"]] and m["third_party_licenses"]["status"] == "complete" for m in ms),
            (p.stdout + p.stderr)[-300:])
 
