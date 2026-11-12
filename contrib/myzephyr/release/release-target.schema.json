@@ -71,45 +71,6 @@
     "run_url": {"type": "string", "pattern": "^https://"},
     "tested": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "not_tested": {"type": "string"},
-    "native_start": {
-      "description": "Outcome of the optional native start test (macos-arm64 only; owner decision 2026-11-12: not a required check), one leg per hosted runner label. Platform status: failed if a leg failed with the binary run (such a set is never released), else passed if a leg passed, else not-run with every leg's reason.",
-      "type": "object",
-      "required": ["status", "reason", "read_at", "legs"],
-      "additionalProperties": false,
-      "properties": {
-        "status": {"enum": ["passed", "not-run", "failed"]},
-        "reason": {"type": ["string", "null"]},
-        "read_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
-        "legs": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "required": ["job_name", "status", "reason", "runner_label", "runner_name", "job_id", "job_url", "checks"],
-            "additionalProperties": false,
-            "properties": {
-              "job_name": {"type": "string", "minLength": 1},
-              "status": {"enum": ["passed", "not-run", "failed"]},
-              "reason": {"type": ["string", "null"]},
-              "runner_label": {"type": ["string", "null"]},
-              "runner_name": {"type": ["string", "null"]},
-              "job_id": {"type": ["integer", "null"]},
-              "job_url": {"type": ["string", "null"]},
-              "checks": {
-                "type": "object",
-                "required": ["Version output of the verified binary", "Strict offline start with clean shutdown and no listener left", "Default discovery from an empty directory (no peer options)"],
-                "additionalProperties": false,
-                "properties": {
-                  "Version output of the verified binary": {"type": ["string", "null"]},
-                  "Strict offline start with clean shutdown and no listener left": {"type": ["string", "null"]},
-                  "Default discovery from an empty directory (no peer options)": {"type": ["string", "null"]}
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "third_party_licenses": {
       "type": "object",
       "required": ["status", "reasons", "entries"],

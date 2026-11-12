@@ -4,7 +4,6 @@
   make-release-set.py --checkout DIR --out DIR --run-url URL
       --artifact linux-x86_64=DIR --artifact linux-aarch64=DIR
       --artifact macos-x86_64=DIR --artifact macos-arm64=DIR --artifact windows-x86_64=DIR
-      --native-start macos-arm64=FILE
 
 Each --artifact is a build artifact of this run that the calling job has already verified
 (verify-artifact.py or verify-cross-artifact.py with the job's own trusted inputs); this
@@ -46,15 +45,6 @@ the package's licence texts and the pin in the checkout's recipe. It is added to
 flat file (same bytes for every platform), listed in SHA256SUMS, in the manifests of the
 platforms that link it ("source_tarballs") and in their README.txt. Missing or different:
 exit 1 (never skipped).
-Native start of macos-arm64 (owner decision 2026-11-12: build and static check required, the
-native start test optional, as hosted Apple Silicon runners are not always available):
---native-start names the outcome file native-start.py wrote for the legs (one per runner label,
-macos-15 and macos-26). Every leg that passed adds a tested line with its runner label and job; a
-leg that did not run while another passed gets one README line with its reason; when no leg ran,
-README.txt says the binary was not started natively in this run, with each leg's reason; a leg
-that failed with the binary run makes the platform "failed", written into the manifest and
-README.txt as a start failure, and check-release-set.py refuses such a set. The outcome is stored
-in the manifest as "native_start".
 Per-platform manifest zephyrd-<version string>-<platform>.manifest.json
 (release-target.schema.json). SHA256SUMS lists the archives and the manifests, never itself.
 After writing, every archive is unpacked again and must yield exactly the layout and the
@@ -116,59 +106,20 @@ TESTED = {
         "cross-built in the pinned builder (minimum macOS 10.13, thin x86_64)",
         "on macos-15-intel: --version, a strict offline start with clean shutdown and default public peer discovery",
     ],
-    "macos-arm64": [   # a native start line is added per leg that native-start.py read as passed (native_lines)
+    "macos-arm64": [
         "cross-built in the pinned builder (thin arm64, minimum macOS 10.13 in the binary; ad-hoc code signature by the linker)",
+        "on macos-26 (Apple Silicon): --version, a strict offline start with clean shutdown and default public peer discovery",
     ],
     "windows-x86_64": [
         "cross-built in the pinned builder (MinGW-w64, no MinGW runtime DLL)",
         "on windows-2022: --version, a strict offline start with clean shutdown and default public peer discovery",
     ],
 }
-NATIVE_STATUS = ("passed", "not-run", "failed")
-NATIVE_PLATFORMS = ("macos-arm64",)   # platforms whose native start test is optional
-
-
-NATIVE_LEG_KEYS = ("job_name", "status", "reason", "runner_label", "runner_name", "job_id", "job_url", "checks")
-
-
-def native_lines(ns):
-    """Tested lines: one per leg that passed."""
-    return [f"on {l['runner_label']} (Apple Silicon, job {l['job_id']}): --version, a strict offline start with clean "
-            "shutdown and default public peer discovery" for l in ns["legs"] if l["status"] == "passed"]
-
-
-def native_text(ns):
-    """README.txt and warning wording of an optional native start outcome (lines; empty when nothing to add)."""
-    label = lambda l: l["runner_label"] or l["job_name"]
-    if ns["status"] == "failed":
-        return [f"NATIVE START FAILED in this run on {label(l)}: {l['reason']} ({l['job_url']}). "
-                "This archive must not be released." for l in ns["legs"] if l["status"] == "failed"]
-    if ns["status"] == "not-run":
-        return [f"Not started natively in this run: {ns['reason']}. The native start test depends on hosted Apple "
-                "Silicon runner availability and is not a required check; the build and the static checks above are."]
-    return [f"No start on {label(l)} in this run: {l['reason']}." for l in ns["legs"] if l["status"] == "not-run"]
-
-
-def valid_native(ns, plat):
-    if not isinstance(ns, dict) or ns.get("platform") != plat or ns.get("status") not in NATIVE_STATUS:
-        return False
-    legs = ns.get("legs")
-    if not isinstance(legs, list) or not legs or not all(isinstance(l, dict) and l.get("status") in NATIVE_STATUS
-                                                       and (l["status"] == "passed") == (l.get("reason") is None)
-                                                       for l in legs):
-        return False
-    if any(l["status"] == "passed" and not (l.get("runner_label") and l.get("job_id")) for l in legs):
-        return False
-    st = [l["status"] for l in legs]
-    want = "failed" if "failed" in st else "passed" if "passed" in st else "not-run"
-    return ns["status"] == want and (ns["status"] == "passed") == (ns.get("reason") is None)
-
-
 NOT_TESTED = {
     "linux-x86_64": "other Linux distributions than the two userlands above",
     "linux-aarch64": "other AArch64 distributions",
     "macos-x86_64": "macOS 10.13 to 14 and Apple Silicon (Rosetta)",
-    "macos-arm64": "macOS 11 to 14 (Apple Silicon Macs start at macOS 11)",
+    "macos-arm64": "macOS 11 to 15 (Apple Silicon Macs start at macOS 11)",
     "windows-x86_64": "Windows 10 and other Windows Server versions",
 }
 REPLACE_NOTE = {
@@ -375,8 +326,7 @@ def readme(tm):
         "  The RPC interface, the P2P protocol and the database format are upstream's; the version number stays 2.3.0.",
         "",
         "WHAT THE HOSTED RUNNERS OF THIS RUN TESTED",
-    ] + [f"  - {t}" for t in tm["tested"]] + (
-        [f"  {t}" for t in native_text(tm["native_start"])] if "native_start" in tm else []) + [
+    ] + [f"  - {t}" for t in tm["tested"]] + [
         f"  Not tested by this run: {tm['not_tested']}. A full mainnet sync and a database resume",
         "  test of the Linux x86_64 binary are separate steps before a release (see the release notes).",
     ]
@@ -453,20 +403,7 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--run-url", required=True)
     p.add_argument("--artifact", action="append", required=True, help="platform=DIR")
-    p.add_argument("--native-start", action="append", required=True, help="macos-arm64=FILE (native-start.py output)")
     a = p.parse_args()
-    natives = {}
-    for spec in a.native_start:
-        plat, _, f = spec.partition("=")
-        if plat not in NATIVE_PLATFORMS or not f or plat in natives:
-            fail(f"--native-start {spec!r}: expected {'/'.join(NATIVE_PLATFORMS)}=FILE, each once")
-        ns = load_json(f)
-        if not valid_native(ns, plat):
-            fail(f"--native-start {spec!r}: not a native-start.py outcome for {plat}")
-        natives[plat] = {"status": ns["status"], "reason": ns["reason"], "read_at": ns.get("read_at"),
-                         "legs": [{k: l.get(k) for k in NATIVE_LEG_KEYS} for l in ns["legs"]]}
-    if sorted(natives) != sorted(NATIVE_PLATFORMS):
-        fail(f"need --native-start for {list(NATIVE_PLATFORMS)}")
     arts = {}
     for spec in a.artifact:
         plat, _, d = spec.partition("=")
@@ -548,14 +485,11 @@ def main():
                 "source": {"commit": commit, "commit_time": epoch, "own_commits": own},
                 "base": m["base"], "own_commit_signer_primary_fingerprint": m["own_commit_signer_primary_fingerprint"],
                 "workflow": m["workflow"], "run_url": a.run_url,
-                "tested": TESTED[plat] + (native_lines(natives[plat]) if plat in natives else []),
-                "not_tested": NOT_TESTED[plat],
+                "tested": TESTED[plat], "not_tested": NOT_TESTED[plat],
                 "third_party_licenses": {"status": status, "reasons": reasons, "entries": entries},
                 "source_tarballs": tarballs,
                 "manifest_name": mname, "source_date_epoch": epoch,
             }
-            if plat in natives:
-                tm["native_start"] = natives[plat]
             with open(os.path.join(stage, "README.txt"), "w", encoding="utf-8") as f:
                 f.write(readme(tm))
             out = os.path.join(a.out, archive)
@@ -589,8 +523,6 @@ def main():
             print(f"{archive}  {tm['archive']['sha256']}  licences {status}" + (f" ({len(reasons)} open)" if reasons else ""))
             for r in reasons:
                 print(f"::warning title=licences {plat}::not established: {r}")
-            for t in (native_text(natives[plat]) if plat in natives else []):
-                print(f"::warning title=native start {plat}::{t}")
         listed = sorted(n for n in os.listdir(a.out))
         if listed != sorted(sums):
             fail(f"unexpected files in {a.out}: {listed}")

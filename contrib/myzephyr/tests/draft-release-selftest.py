@@ -27,11 +27,6 @@ files. Cases: present (fourteen files, the three tarballs among those given to g
 that does not link a package needs no tarball of it; refused, per package: the tarball
 missing from the set, its hash not the pin (set re-hashed consistently), a manifest naming
 the package without naming the tarball.
-Round 21 (owner decision 2026-11-12: the macOS arm64 start test is optional): the default set
-says it passed (native-start outcome "passed", tested line with runner and job). A set whose
-start was not run is accepted and its notes say so with the reason; refused: a set whose start
-failed (one leg failed with the binary run), and a "not run" manifest that still lists a start
-as tested. The outcomes have two legs, macos-15 and macos-26.
 """
 import hashlib
 import json
@@ -153,33 +148,7 @@ try:
             "windows-x86_64": ("x86_64-w64-mingw32", "zephyrd.exe")}
     RUN_URL = f"https://github.com/{REPO}/actions/runs/{RUN}/attempts/1"
 
-    STEPS = ("Version output of the verified binary", "Strict offline start with clean shutdown and no listener left",
-             "Default discovery from an empty directory (no peer options)")
-
-    def native_file(name, status):
-        """A native-start.py outcome with two legs (macos-15, macos-26)."""
-        def leg(label, st, reason, jid, checks):
-            return {"job_name": f"native runtime (aarch64-apple-darwin on {label})", "status": st, "reason": reason,
-                    "runner_label": label, "runner_name": "GitHub Actions 7" if st != "not-run" else None, "job_id": jid,
-                    "job_url": f"https://github.com/{REPO}/actions/runs/{RUN}/job/{jid}", "checks": dict(zip(STEPS, checks))}
-        na = "runner not acquired: job cancelled before any step"
-        ok3, none3 = ("success",) * 3, (None,) * 3
-        if status == "passed":
-            legs = [leg("macos-15", "passed", None, 900, ok3), leg("macos-26", "not-run", na, 901, none3)]
-            reason = None
-        elif status == "failed":
-            legs = [leg("macos-15", "passed", None, 900, ok3),
-                    leg("macos-26", "failed", f"start step '{STEPS[1]}' ended failure", 901, ("success", "failure", "skipped"))]
-            reason = f"macos-26: start step '{STEPS[1]}' ended failure"
-        else:
-            legs = [leg("macos-15", "not-run", na, 900, none3), leg("macos-26", "not-run", na, 901, none3)]
-            reason = f"macos-15: {na}; macos-26: {na}"
-        path = os.path.join(work, f"native-{name}.json")
-        json.dump({"platform": "macos-arm64", "status": status, "reason": reason, "legs": legs, "read_at": "2026-11-12T21:00:00Z"},
-                  open(path, "w"))
-        return path
-
-    def make_set(name, mutate=None, native="passed"):
+    def make_set(name, mutate=None):
         arts = os.path.join(work, name + "-arts")
         for plat, (target, binary) in PLAT.items():
             d = os.path.join(arts, plat)
@@ -217,8 +186,7 @@ try:
             json.dump(m, open(os.path.join(d, "manifest.json"), "w"))
         out = os.path.join(work, name + "-set")
         p = run(sys.executable, "-I", os.path.join(tools, "release", "make-release-set.py"), "--checkout", co, "--out", out,
-                "--run-url", RUN_URL, *[f"--artifact={pl}={os.path.join(arts, pl)}" for pl in PLAT],
-                f"--native-start=macos-arm64={native_file(name, native)}", check=False)
+                "--run-url", RUN_URL, *[f"--artifact={pl}={os.path.join(arts, pl)}" for pl in PLAT], check=False)
         if p.returncode != 0:
             raise SystemExit(f"make-release-set failed for {name}: {p.stderr}")
         return out
@@ -409,29 +377,6 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
         json.dump(mm, open(os.path.join(unnamed, mf), "w"), indent=2, sort_keys=True)
         resum(unnamed, [mf])
         scenario(f"manifest names {pkg} but no source tarball", set_dir=unnamed, want_exit=1, frag=f"names depends:{pkg} but the manifest names no source tarball of it")
-
-    # round 21: the optional macOS arm64 start test
-    p, out, creates, log = scenario("macOS arm64 start not run: accepted", set_dir=make_set("arm64-not-run", native="not-run"),
-                                    frag="draft created")
-    notes = open(log + ".notes").read() if os.path.exists(log + ".notes") else ""
-    record("notes of a not-run set: macos-arm64 not started natively, with the reason, no start listed as tested",
-           "Not started natively in this run: macos-15: runner not acquired: job cancelled before any step; macos-26: runner not acquired" in notes
-           and "(Apple Silicon, job" not in notes and len(creates) == 1, notes[-900:])
-    gnotes = open(os.path.join(work, "case-" + safe_name("real call creates the draft"), "gh.log.notes")).read()
-    record("notes of a passed set: the macos-15 start with its job listed as tested, macos-26 named with its reason",
-           "on macos-15 (Apple Silicon, job 900): --version, a strict offline start" in gnotes and "Not started natively" not in gnotes
-           and "No start on macos-26 in this run: runner not acquired" in gnotes)
-    scenario("macOS arm64 start failed: refused", set_dir=make_set("arm64-failed", native="failed"), want_exit=1,
-             frag="the native start test failed in the run")
-    lying = os.path.join(work, "arm64-not-run-but-tested-set")
-    shutil.copytree(make_set("arm64-not-run-2", native="not-run"), lying)
-    mf = next(n for n in os.listdir(lying) if n.endswith("macos-arm64.manifest.json"))
-    mm = json.load(open(os.path.join(lying, mf)))
-    mm["tested"].append("on macos-15 (Apple Silicon, job 900): --version, a strict offline start with clean shutdown and default public peer discovery")
-    json.dump(mm, open(os.path.join(lying, mf), "w"), indent=2, sort_keys=True)
-    resum(lying, [mf])
-    scenario("macOS arm64 start not run but listed as tested: refused", set_dir=lying, want_exit=1,
-             frag="a start is listed as tested")
 
     # usage
     scenario("tag name outside v*-sec.*-my.*", args=["v2.3.0-sec.2", RUN], want_exit=2, frag="does not match")

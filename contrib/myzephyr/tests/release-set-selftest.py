@@ -29,20 +29,6 @@ ships it): "statement ... none" rows, for a directory where no file states anyth
 where another file does, leave the set "complete" and are not named in INDEX.txt, README.txt or
 the manifest; a directory with a statement row but no text, and the blockers above, still make
 it "incomplete".
-Round 21 (owner decision 2026-11-12: the macOS arm64 start test is optional, two legs on
-macos-15 and macos-26): native-start.py classify on the real job record of run 43297105618
-attempt 1 (runner not acquired) and on records derived from that run's real macOS x86_64 record
-(renamed to an arm64 leg): passed; a start step failed or cancelled (failed); a failure before
-the first start step, skipped, not completed at the end of the wait (not-run). Two legs: neither
-ran (not-run with both reasons), one passed with the other not run (passed, either order), both
-passed, one passed and one failed (failed). native-start.py wait against a loopback API stub,
-one limit for both legs: both stay queued (not-run within the limit), one passes and the other
-stays queued (passed at the limit), both complete (before the limit), an API that always refuses
-(not-run), a missing leg (exit 1). make-release-set.py: each passed leg listed as tested with its
-runner and job, a leg that did not run beside a passed one gets a line with its reason, neither
-ran says "not started natively in this run" with both reasons, a failed leg is written as
-"NATIVE START FAILED ... must not be released" with a warning; no other platform carries
-native_start; a malformed outcome or none is refused.
 """
 import copy
 import gzip
@@ -181,52 +167,11 @@ def base_set(name):
     return d
 
 
-# round 21: outcomes of the optional macOS arm64 start test (two legs), made by native-start.py classify
-ns_tool = os.path.join(os.path.dirname(here), "release", "native-start.py")
-fx = os.path.join(here, "native-start-fixture")
-LEG = {"macos-15": "native runtime (aarch64-apple-darwin on macos-15)", "macos-26": "native runtime (aarch64-apple-darwin on macos-26)"}
-START = ("Version output of the verified binary", "Strict offline start with clean shutdown and no listener left",
-         "Default discovery from an empty directory (no peer options)")
-REAL = json.load(open(os.path.join(fx, "run-43297105618-attempt-1-macos-arm64.json")))
-
-
-def not_acquired(label, **over):
-    """The real record of run 43297105618 attempt 1 (runner not acquired), for the leg of label."""
-    return dict(REAL, name=LEG[label], labels=[label], **over)
-
-
-def arm_job(label="macos-15", **over):
-    """The real macOS x86_64 job record of run 43297105618 attempt 1, renamed to the arm64 leg of label."""
-    j = json.load(open(os.path.join(fx, "run-43297105618-attempt-1-macos-x86_64.json")))
-    j.update(name=LEG[label], labels=[label], id=j["id"] + (0 if label == "macos-15" else 1))
-    steps = over.pop("steps", {})
-    for st in j["steps"]:
-        if st["name"] in steps:
-            st["conclusion"] = steps[st["name"]]
-    j.update(over)
-    return j
-
-
-def classify(name, jobs, limit_reached=False):
-    of = os.path.join(work, f"native-{name}.json")
-    args = [sys.executable, "-I", ns_tool, "classify", "--out", of] + (["--limit-reached"] if limit_reached else [])
-    for i, job in enumerate(jobs):
-        jf = os.path.join(work, f"job-{name}-{i}.json")
-        json.dump(job, open(jf, "w"))
-        args += ["--job", jf]
-    p = subprocess.run(args, capture_output=True, text=True)
-    return (json.load(open(of)) if p.returncode == 0 else {"status": f"exit {p.returncode}", "reason": p.stderr, "legs": []}), of
-
-
-NS_PASSED = classify("passed", [arm_job("macos-15"), not_acquired("macos-26")])[1]
-
-
-def run(name, d, checkout=co, native=None):
+def run(name, d, checkout=co):
     out = os.path.join(work, name + "-out")
-    nat = [] if native == "none" else [f"--native-start=macos-arm64={native or NS_PASSED}"]
     p = subprocess.run([sys.executable, "-I", tool, "--checkout", checkout, "--out", out,
                         "--run-url", "https://github.com/example/myzephyr/actions/runs/5/attempts/1",
-                        *[f"--artifact={plat}={os.path.join(d, plat)}" for plat in PLAT], *nat], capture_output=True, text=True)
+                        *[f"--artifact={plat}={os.path.join(d, plat)}" for plat in PLAT]], capture_output=True, text=True)
     return p, out
 
 
@@ -514,104 +459,6 @@ variant("no-statement-but-unresolved-line", lambda dv: (no_statement(dv), edit_i
             ["status", "unresolved", "tree:external/nostat", "-", "no licence file in external/nostat or above it within its boundary, and no compiled-in file of external/nostat whose head could be read"]])),
         0, "unresolved: tree:external/nostat", "incomplete")
 
-# round 21: classification of one leg (the first leg of a one-leg call)
-leg_cases = [
-    ("real record of run 43297105618 attempt 1 (runner not acquired)", REAL, False, "not-run", "runner not acquired"),
-    ("all three start steps succeeded", arm_job(), False, "passed", None),
-    ("strict offline start failed", arm_job(conclusion="failure", steps={START[1]: "failure", START[2]: "skipped"}), False, "failed",
-     f"start step '{START[1]}' ended failure"),
-    ("version step cancelled (job timeout)", arm_job(conclusion="cancelled", steps={START[0]: "cancelled", START[1]: "skipped",
-                                                                                    START[2]: "skipped"}), False, "failed", "ended cancelled"),
-    ("failure before the first start step (artifact download)", arm_job(conclusion="failure", steps={
-        "Download the cross-built artifact": "failure", **{n: "skipped" for n in START}}), False, "not-run",
-     "job failure before the binary was started (step 'Download the cross-built artifact')"),
-    ("job skipped", dict(REAL, conclusion="skipped"), False, "not-run", "job skipped"),
-    ("still queued when the wait ended", dict(REAL, status="queued", conclusion=None), True, "not-run",
-     "job not completed when the package job's wait ended (status queued)"),
-    ("in progress after the version step when the wait ended", arm_job(status="in_progress", conclusion=None, steps={
-        START[0]: "success", START[1]: None, START[2]: None}), True, "not-run", "status in_progress"),
-]
-for i, (name, job, lr, want, frag) in enumerate(leg_cases):
-    got, _ = classify(f"leg{i}", [job], lr)
-    leg = (got.get("legs") or [{}])[0]
-    ok = leg.get("status") == want and ((frag is None and leg.get("reason") is None) or (frag and frag in (leg.get("reason") or "")))
-    if want == "passed":
-        ok = ok and leg["runner_label"] == "macos-15" and leg["job_id"] == job["id"] and all(v == "success" for v in leg["checks"].values())
-    record(f"native start leg: {name} -> {want}", ok, got)
-
-# round 21: two legs (macos-15, macos-26) -> the platform's outcome
-FAILED_JOB = leg_cases[2][1]
-combo = [
-    ("neither leg acquired a runner", [not_acquired("macos-15"), not_acquired("macos-26")], "not-run",
-     ["not-run", "not-run"], "macos-15: runner not acquired: job cancelled before any step; macos-26: runner not acquired"),
-    ("macos-15 passed, macos-26 not acquired", [arm_job("macos-15"), not_acquired("macos-26")], "passed", ["passed", "not-run"], None),
-    ("macos-15 not acquired, macos-26 passed", [not_acquired("macos-15"), arm_job("macos-26")], "passed", ["not-run", "passed"], None),
-    ("both legs passed", [arm_job("macos-15"), arm_job("macos-26")], "passed", ["passed", "passed"], None),
-    ("macos-15 passed, macos-26 failed with the binary run", [arm_job("macos-15"), dict(FAILED_JOB, name=LEG["macos-26"], labels=["macos-26"])],
-     "failed", ["passed", "failed"], "macos-26: start step"),
-]
-for i, (name, jobs, want, legs, frag) in enumerate(combo):
-    got, _ = classify(f"combo{i}", jobs)
-    ok = got["status"] == want and [l["status"] for l in got["legs"]] == legs and \
-        [l["runner_label"] for l in got["legs"]] == [j["labels"][0] for j in jobs] and \
-        ((frag is None and got["reason"] is None) or (frag and frag in (got["reason"] or "")))
-    record(f"native start, two legs: {name} -> {want}", ok, got)
-
-# round 21: make-release-set.py with each outcome
-NS_BOTH = classify("both", combo[3][1])[1]
-NS_NOTRUN = classify("not-run", combo[0][1])[1]
-NS_FAILED = classify("failed", combo[4][1])[1]
-arm = f"zephyrd-{vs}-macos-arm64"
-
-
-def arm_view(out):
-    man = json.load(open(os.path.join(out, arm + ".manifest.json")))
-    rd = tarfile.open(os.path.join(out, arm + ".tar.gz")).extractfile(f"{arm}/README.txt").read().decode()
-    others = [json.load(open(os.path.join(out, f"zephyrd-{vs}-{pl}.manifest.json"))) for pl in PLAT if pl != "macos-arm64"]
-    return man, rd, others
-
-
-def tested_part(rd):
-    return rd.split("WHAT THE HOSTED RUNNERS")[1].split("NOTE")[0]
-
-
-j15, j26 = combo[3][1]
-line15 = f"on macos-15 (Apple Silicon, job {j15['id']}): --version, a strict offline start"
-line26 = f"on macos-26 (Apple Silicon, job {j26['id']}): --version, a strict offline start"
-for i, (name, nsf, check) in enumerate([
-    ("macos-15 passed, macos-26 not acquired: the macos-15 start listed as tested, one line for macos-26 with its reason",
-     NS_PASSED, lambda man, rd: man["native_start"]["status"] == "passed" and len(man["tested"]) == 2 and line15 in man["tested"][1]
-     and line15 in rd and "No start on macos-26 in this run: runner not acquired" in rd and "Not started natively" not in rd),
-    ("both legs passed: both starts listed as tested with runner and job",
-     NS_BOTH, lambda man, rd: man["native_start"]["status"] == "passed" and len(man["tested"]) == 3 and line15 in rd and line26 in rd
-     and "No start on" not in rd and "Not started natively" not in rd),
-    ("neither leg ran: only the build listed; README says not started natively in this run with both reasons",
-     NS_NOTRUN, lambda man, rd: man["native_start"]["status"] == "not-run" and len(man["tested"]) == 1
-     and "strict offline start" not in tested_part(rd)
-     and "Not started natively in this run: macos-15: runner not acquired: job cancelled before any step; macos-26: runner not acquired" in rd
-     and "not a required check" in rd),
-    ("a leg failed with the binary run: written, README says NATIVE START FAILED on macos-26 and must not be released",
-     NS_FAILED, lambda man, rd: man["native_start"]["status"] == "failed" and "NATIVE START FAILED in this run on macos-26" in rd
-     and "must not be released" in rd),
-]):
-    tag = f"native-set{i}"
-    p, outn = run(tag, base_set(tag), native=nsf)
-    if p.returncode == 0:
-        man, rd, others = arm_view(outn)
-        ok = check(man, rd) and all("native_start" not in o for o in others)
-        if "FAILED" in name:
-            ok = ok and "::warning title=native start macos-arm64::NATIVE START FAILED" in p.stdout
-        record(f"release set: {name}", ok, (man.get("native_start"), tested_part(rd)[-700:]))
-    else:
-        record(f"release set: {name}", False, p.stderr[-300:])
-p, _ = run("native-none", base_set("native-none"), native="none")
-record("no --native-start: refused", p.returncode != 0 and "--native-start" in p.stderr, p.stderr[-300:])
-bad = json.load(open(NS_PASSED)); bad["status"] = "not-run"; bad["reason"] = "invented"
-badf = os.path.join(work, "native-malformed.json"); json.dump(bad, open(badf, "w"))
-p, _ = run("native-malformed", base_set("native-malformed"), native=badf)
-record("malformed outcome (not-run although a leg passed): refused", p.returncode == 1 and "not a native-start.py outcome" in p.stderr,
-       p.stderr[-300:])
-
 # compare-pr-run.py against a loopback stub of the REST API (synthetic runs and artifact names)
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -661,62 +508,6 @@ API["mode"] = "error"
 p, md = compare_run("compare-error")
 record("compare: API refusal is 'not available', still exit 0", p.returncode == 0 and "Not available: HTTPError" in md, md)
 srv.shutdown()
-
-# round 21: native-start.py wait (two legs, one bounded wait) against a loopback stub of the jobs API
-NS_API = {"mode": "queued", "calls": 0}
-
-
-class JobsApi(BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
-
-    def do_GET(self):
-        NS_API["calls"] += 1
-        if NS_API["mode"] == "error" or not self.path.startswith("/repos/example/myzephyr/actions/runs/5/attempts/2/jobs"):
-            self.send_response(403); self.end_headers(); return
-        late = NS_API["calls"] >= 3
-        queued = lambda label: not_acquired(label, status="queued", conclusion=None)
-        jobs = {"queued": [queued("macos-15"), queued("macos-26")],
-                "one-passes": [arm_job("macos-15") if late else queued("macos-15"), queued("macos-26")],
-                "both-complete": [arm_job("macos-15") if late else queued("macos-15"), not_acquired("macos-26") if late else queued("macos-26")],
-                "missing": [queued("macos-15")]}[NS_API["mode"]]
-        b = json.dumps({"total_count": len(jobs), "jobs": jobs}).encode()
-        self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
-
-
-srv2 = ThreadingHTTPServer(("127.0.0.1", 0), JobsApi)
-threading.Thread(target=srv2.serve_forever, daemon=True).start()
-
-
-def wait(name, mode, limit=3):
-    NS_API.update(mode=mode, calls=0)
-    of = os.path.join(work, f"wait-{name}.json")
-    p = subprocess.run([sys.executable, "-I", ns_tool, "wait", "--repository", "example/myzephyr", "--run-id", "5", "--run-attempt", "2",
-                        "--job-name", LEG["macos-15"], "--job-name", LEG["macos-26"], "--limit", str(limit), "--poll", "0.5",
-                        "--api", f"http://127.0.0.1:{srv2.server_address[1]}", "--out", of], capture_output=True, text=True)
-    return p, (json.load(open(of)) if os.path.exists(of) else {})
-
-
-p, w = wait("queued", "queued")
-record("wait: both legs stay queued -> not-run with both reasons within the one limit (3 s here, 2700 s in the workflow)",
-       p.returncode == 0 and w.get("status") == "not-run" and w.get("reason", "").count("status queued") == 2
-       and w.get("waited_seconds", 99) <= 4.5, w)
-p, w = wait("one-passes", "one-passes")
-record("wait: macos-15 passes, macos-26 stays queued -> passed, macos-26 not completed, still within the one limit",
-       p.returncode == 0 and w.get("status") == "passed" and [l["status"] for l in w.get("legs", [])] == ["passed", "not-run"]
-       and "status queued" in w["legs"][1]["reason"] and 2.5 <= w.get("waited_seconds", 0) <= 4.5, w)
-p, w = wait("both-complete", "both-complete", limit=20)
-record("wait: both legs complete (macos-15 passed, macos-26 not acquired) -> passed, before the limit",
-       p.returncode == 0 and w.get("status") == "passed" and [l["status"] for l in w.get("legs", [])] == ["passed", "not-run"]
-       and "runner not acquired" in w["legs"][1]["reason"] and w.get("waited_seconds", 99) < 10, w)
-p, w = wait("error", "error")
-record("wait: an API that always refuses -> not-run (state not readable) for both legs within the limit",
-       p.returncode == 0 and w.get("status") == "not-run" and w.get("reason", "").count("not readable") == 2
-       and w.get("waited_seconds", 99) <= 4.5, w)
-p, w = wait("missing", "missing")
-record("wait: a leg's job missing from the run attempt -> exit 1 (configuration error)",
-       p.returncode == 1 and "expected exactly one" in p.stderr, p.stderr[-300:])
-srv2.shutdown()
 
 json.dump(results, open(os.path.join(work, "results.json"), "w"), indent=2)
 bad = [r for r in results if not r["ok"]]
