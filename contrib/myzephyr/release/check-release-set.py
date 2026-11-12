@@ -15,7 +15,12 @@ artifact. Checks, each fatal (exit 1):
             is --run-id and --run-attempt, event push on --ref of --repository; its version
             string is v<number>-<first 9 hex digits of the commit> ("release" never); its
             archive name, size and hash match the file and SHA256SUMS; the licence list is
-            "complete" (an incomplete list is refused with its reasons);
+            "complete" (an incomplete list is refused with its reasons); macos-arm64 names the
+            outcome of its optional native start test ("native_start", one leg per runner label;
+            no other platform has it): "failed" (a leg failed with the binary run) is refused;
+            otherwise the tested lines name exactly the legs that passed (runner label and job),
+            and "not-run" (no leg ran) needs a reason (owner decision 2026-11-12: not a
+            required check);
   archive   each archive unpacks to exactly one top directory zephyrd-<version>-<platform>/
             with the binary (mode 0755, the manifest's and the build manifest's hash),
             LICENSE, README.txt and THIRD-PARTY-LICENSES/INDEX.txt, and no link or path
@@ -51,6 +56,7 @@ _spec.loader.exec_module(va)
 PLATFORMS = {"linux-x86_64": ("zephyrd", "tar.gz"), "linux-aarch64": ("zephyrd", "tar.gz"),
              "macos-x86_64": ("zephyrd", "tar.gz"), "macos-arm64": ("zephyrd", "tar.gz"),
              "windows-x86_64": ("zephyrd.exe", "zip")}
+NATIVE_PLATFORMS = ("macos-arm64",)   # platforms whose native start test is optional
 SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 SOURCE_WITH_RELEASE = ("readline", "libusb", "zeromq")
 
@@ -161,6 +167,28 @@ def check(a):
         lic = m["third_party_licenses"]
         if lic["status"] != "complete":
             raise Refused(f"{plat}: licence list incomplete: {lic['reasons']}")
+        ns = m.get("native_start")
+        if plat not in NATIVE_PLATFORMS:
+            if ns is not None:
+                raise Refused(f"{plat}: names a native start outcome; only {', '.join(NATIVE_PLATFORMS)} may")
+        elif ns is None:
+            raise Refused(f"{plat}: the manifest names no outcome of the native start test")
+        else:
+            st = [l["status"] for l in ns["legs"]]
+            want = "failed" if "failed" in st else "passed" if "passed" in st else "not-run"
+            starts = [t for t in m["tested"] if "strict offline start" in t]
+            passed = [l for l in ns["legs"] if l["status"] == "passed"]
+            if ns["status"] != want:
+                raise Refused(f"{plat}: native start status {ns['status']!r} does not follow from its legs {st}")
+            if ns["status"] == "failed":
+                raise Refused(f"{plat}: the native start test failed in the run: {ns['reason']}")
+            if len(starts) != len(passed) or not all(
+                    l["runner_label"] and l["job_id"] and any(f"on {l['runner_label']} " in t and f"job {l['job_id']})" in t for t in starts)
+                    for l in passed):
+                raise Refused(f"{plat}: the tested lines do not name exactly the native start legs that passed "
+                              "(a start is listed as tested that did not pass, or one is missing)")
+            if ns["status"] == "not-run" and not ns["reason"]:
+                raise Refused(f"{plat}: native start not run, but no reason is given")
         arch = os.path.join(d, m["archive"]["name"])
         if not os.path.isfile(arch) or sha256(arch) != m["archive"]["sha256"] or os.path.getsize(arch) != m["archive"]["size"] \
                 or sums.get(m["archive"]["name"]) != m["archive"]["sha256"]:
@@ -231,7 +259,12 @@ def notes(a, mans, vs):
     lines += ["", "## Platforms and what the hosted runners of the run tested", ""]
     for plat in PLATFORMS:
         m = mans[plat]
+        ns = m.get("native_start")
         lines.append(f"- **{plat}** (`{m['archive']['name']}`, binary `{m['binary']['sha256']}`): " + "; ".join(m["tested"])
+                     + (f". Not started natively in this run: {ns['reason']} (the native start test depends on hosted "
+                        "runner availability and is not a required check)" if ns and ns["status"] == "not-run" else "")
+                     + "".join(f". No start on {l['runner_label'] or l['job_name']} in this run: {l['reason']}"
+                               for l in (ns["legs"] if ns and ns["status"] == "passed" else []) if l["status"] == "not-run")
                      + f". Not tested: {m['not_tested']}.")
     lines += ["", f"Full mainnet sync and database resume test of exactly the Linux x86_64 binary `{mans['linux-x86_64']['binary']['sha256']}`: "
               "**TO BE STATED BY THE OWNER BEFORE PUBLISHING** (this script cannot verify them).", "",

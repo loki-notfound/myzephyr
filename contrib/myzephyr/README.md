@@ -92,6 +92,7 @@ the tag locally): with the tag present the build would print `<version>-release`
 | `link-sources.py` | helpers of `link-inventory.sh`: archive member → object file (same bytes) → source (CMake `DependInfo.cmake`) and each object's dependency record; the PE timestamp; the byte ranges in which two files differ |
 | `release/make-release-set.py`, `release/release-target.schema.json` | the release set of one run: an archive per platform, a manifest per platform (`myzephyr/daemon-release-target/1`) and `SHA256SUMS` (see "Release set") |
 | `release/draft-release.sh`, `release/check-release-set.py` | run locally by the owner after the tag exists, never in CI: checks the run, the tag (`verify-source.sh --release-tag`), GitHub's digest of the release-set artifact and the set itself, then makes a draft release (`--dry-run` prints the command instead); see "Release set" |
+| `release/native-start.py` | in the package job: the outcome of the optional macOS arm64 start test per leg (`macos-15`, `macos-26`) and for the platform (passed, not run with the reasons, or failed), read from GitHub's API with one bounded wait; never changes anything |
 | `release/compare-pr-run.py` | on a push run: the binary hashes of the pull-request run of the same commit, read from its hash marker artifacts' names, side by side in the run summary; reported, never a gate |
 | `runtime/Dockerfile` | runtime-only Debian 11 arm64 userland (the arm64 manifest of the Linux builder base's index, python3 from the same snapshot) for a second offline start of the AArch64 binary |
 | `tests/` | self-tests of `zephyrd-check.py` (stub daemon; `platform-selftest.py` checks the start and stop mechanics on Linux, macOS and Windows and prints diagnostics when a stub is not ready), of `verify-source.sh` (`verify-source-selftest.sh`: a repository and keys made by the test, the split compared with git's own, single changes that must fail), of `unit-test-summary.py` (small invented fixtures), of the preflight of `run-unit-tests.sh` (stub commands and a stub test executable), of `verify-artifact.py` (`artifact-fixture/`: the metadata of run 42543200624's release artifact, with placeholder bytes for the binary) and of the cross-target checks (`cross-selftest.py`, `cross-fixture/`: metadata measured on local cross builds, from which small synthetic ELF, Mach-O (arm64 with an ad-hoc signature computed over the synthetic file) and PE files are made); `run-identity-selftest.py` (each row of the table and one changed value per case) and `ci-checkout-selftest.sh` (a local origin with tags and merge refs over a file URL); `link-inventory-selftest.sh` (a small tree linked by the runner's gcc and GNU ld) and `release-set-selftest.py` (synthetic artifacts; also the run comparison against a stub API) |
@@ -100,7 +101,9 @@ the tag locally): with the tag present the build would print `<version>-release`
 
 ## Release set
 
-The `package` job needs every build and runtime job of the run. It downloads the five
+The `package` job needs every build job, the unit tests and every required runtime job of
+the run; the optional macOS arm64 start test (`native-runtime-macos-arm64`, below) is not
+among them. It downloads the five
 artifacts, verifies each again with its own checkout and checks, and makes one archive per
 platform (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`, `macos-arm64`, `windows-x86_64`) with the fixed
 layout `zephyrd-<version string>-<platform>/`: the binary, the tree's `LICENSE`,
@@ -117,6 +120,21 @@ source tarballs of GNU readline (linked into the Linux and macOS daemons), libus
 ZeroMQ (all five) are published as separate files, each exactly as depends fetched and hash-checked it in the build (carried in the
 build artifact, never downloaded again), and named in those manifests and README files. The set is one artifact, `release-set-<commit>`, kept 90 days on pushes to
 `my/**`.
+
+The macOS arm64 start test is optional (hosted Apple Silicon runners are not always
+available) and runs as two legs, on `macos-15` and on `macos-26`; one free runner of either
+image is enough. Before making the set, `release/native-start.py` reads both jobs' state from
+GitHub's API with the workflow token (`actions: read`) until both have completed, for at most
+45 minutes together, so the `package` job waits at most that long (timeout 75 minutes). The
+`macos-arm64` manifest (`native_start`, with each leg) and README.txt then name each leg that
+ran with its result: a leg whose three steps (`--version`, strict offline start, default
+discovery) succeeded is listed as tested with its runner label and job; a leg that did not run
+while the other passed gets one line with its reason; when neither ran, the set says the binary
+was not started natively in this run, with each leg's reason (runner not acquired, cancelled or
+failed before the first start step, skipped, or not completed within the wait). A leg that
+started the binary and failed a start step makes the set a start failure, which
+`check-release-set.py`, hence `draft-release.sh`, refuses; a set whose start was merely not run
+is accepted.
 
 `THIRD-PARTY-LICENSES/` comes from the build's link inventory (`link-inventory.sh`), whose
 hash the build manifest records (`build.link_inventory_sha256`, checked by the verifiers).
@@ -256,18 +274,22 @@ expected version and the mainnet seeds are checked as embedded strings, and the 
 carries no version output.
 
 `native-runtime` then takes each artifact to a hosted runner of its platform
-(`ubuntu-24.04-arm`, `macos-15-intel`, `macos-15` on Apple Silicon, `windows-2022`), verifies the source and the artifact itself like the
+(`ubuntu-24.04-arm`, `macos-15-intel`, `windows-2022`; the macOS arm64 binary goes to
+`macos-15` and `macos-26` on Apple Silicon in the separate job `native-runtime-macos-arm64`,
+with the same steps, a 30-minute timeout and `continue-on-error`, not a required check), verifies the source and the artifact itself like the
 Linux consumer jobs, runs `--version`, the strict offline start and the default discovery
 with `zephyrd-check.py`. On Windows the clean-stop request is `CTRL_BREAK_EVENT` to the
 daemon, started in its own process group, which zephyrd handles like Ctrl+C; on Linux and
 macOS it is SIGTERM. A daemon that has to be killed is a failed cleanup everywhere.
 
 These runners prove a start on those images only (Ubuntu 24.04 on AArch64, macOS 15 on
-Intel, macOS 15 on Apple Silicon, Windows Server 2022). On the AArch64 runner the binary also gets a strict offline
+Intel, macOS 15 and macOS 26 on Apple Silicon when a leg ran, Windows Server 2022). On the AArch64 runner the binary also gets a strict offline
 start in a runtime-only Debian 11 arm64 userland (glibc 2.31, `runtime/Dockerfile`), as
 the x86_64 binary does in the Debian 11 builder userland; the job records that image's
 glibc version. Other AArch64 distributions, macOS 10.13 to 14 (Intel) and 11 to 14 (Apple
-Silicon), the x86_64 binary under Rosetta and Windows 10 are not covered. Neither macOS binary
+Silicon), the x86_64 binary under Rosetta and Windows 10 are not covered; the macOS arm64
+start on `macos-15` and `macos-26` depends on runner availability, so a release set may say it
+was not started natively in that run. Neither macOS binary
 is notarized; the arm64 one carries only the linker's ad-hoc signature.
 
 Linux AArch64 compiler header: the snapshot's GCC 9.3 cross compiler

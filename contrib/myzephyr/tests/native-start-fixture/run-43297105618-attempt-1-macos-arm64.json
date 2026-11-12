@@ -1,0 +1,27 @@
+{
+  "check_run_url": "https://api.github.com/repos/loki-notfound/myzephyr/check-runs/131470991114",
+  "completed_at": "2026-11-12T20:44:12Z",
+  "conclusion": "cancelled",
+  "created_at": "2026-11-12T20:29:09Z",
+  "head_branch": "ci/daemon-release-baseline",
+  "head_sha": "2911743b19ff933ce141ffe742c657f0ea77543f",
+  "html_url": "https://github.com/loki-notfound/myzephyr/actions/runs/43297105618/job/131470991114",
+  "id": 131470991114,
+  "labels": [
+    "macos-15"
+  ],
+  "name": "native runtime (aarch64-apple-darwin on macos-15)",
+  "node_id": "CR_kwDOVnZAdc8AAAAenEgfCg",
+  "run_attempt": 1,
+  "run_id": 43297105618,
+  "run_url": "https://api.github.com/repos/loki-notfound/myzephyr/actions/runs/43297105618",
+  "runner_group_id": 0,
+  "runner_group_name": "",
+  "runner_id": 0,
+  "runner_name": "",
+  "started_at": "2026-11-12T20:29:09Z",
+  "status": "completed",
+  "steps": [],
+  "url": "https://api.github.com/repos/loki-notfound/myzephyr/actions/jobs/131470991114",
+  "workflow_name": "daemon-release-baseline"
+}

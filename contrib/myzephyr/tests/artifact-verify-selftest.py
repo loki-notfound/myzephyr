@@ -19,7 +19,10 @@ hard-linked unless the case changes it), changes exactly one thing, re-seals SHA
 unless the case is about SHA256SUMS, and must be rejected with exit 1 and a diagnostic
 naming that thing (usage errors: exit 2). The valid cases must pass with exit 0. The
 run-identity table gets one-variable cases on the trusted side and on the manifest side
-for each row. Nothing in an artifact is ever
+for each row. Every "wrong" value of the run context (run id, attempt, repository, ref,
+commits, pull-request number and head) is derived from the real one (other()), so it is wrong
+in every attempt and every run; a fixed value is used only for pinned inputs (base, signer,
+recipe) and for values outside every row of the table. Nothing in an artifact is ever
 executed; the placeholder is not a program. Exit 0 when every case gives the intended verdict.
 """
 import hashlib
@@ -37,6 +40,20 @@ SUMMED = ("zephyrd", "manifest.json", "expected-version.txt", "source-identity.t
 OTHER = "1111111111111111111111111111111111111111"
 MERGE = "2222222222222222222222222222222222222222"
 BASE_TIP = "8c6a120256b4bd887d6e7167d929d76e3507e0e5"
+
+
+def other(v):
+    """A value that differs from v whatever v is. Real mode takes run id, attempt, repository, ref,
+    commits and pull-request fields from the real run, so a fixed "wrong" value can be the right one
+    there (a fixed attempt 2 in a second attempt); every such case derives its value from the real one."""
+    if isinstance(v, int) and not isinstance(v, bool):
+        return v + 1
+    s = str(v)
+    if s.isdigit():
+        return str(int(s) + 1)
+    if len(s) == 40 and all(c in "0123456789abcdef" for c in s):
+        return ("1" if s[0] == "0" else "0") + s[1:]
+    return s + "-other"
 
 
 def sha256(path):
@@ -275,7 +292,7 @@ def file_remove(rel, frag):
 
 def trusted(key, value, frag):
     def run(d, t):
-        t[key] = value
+        t[key] = value(t[key]) if callable(value) else value
         return frag
     return run
 
@@ -311,7 +328,7 @@ def trusted_identity_edit(old, new, frag):
 def trusted_pr(key, value, frag):
     def run(d, t):
         pr = json.loads(t["pull-request"])
-        pr[key] = value
+        pr[key] = value(pr[key]) if callable(value) else value
         t["pull-request"] = json.dumps(pr)
         return frag
     return run
@@ -319,7 +336,8 @@ def trusted_pr(key, value, frag):
 
 def manifest_pr(key, value, frag):
     def fn(m, t):
-        m["workflow"]["pull_request"][key] = value
+        node = m["workflow"]["pull_request"]
+        node[key] = value(node[key]) if callable(value) else value
         return frag
     return manifest_case(fn)
 
@@ -345,13 +363,13 @@ NEGATIVE = [
     ("check-as-integer", m_set(["checks", "version_output_matches_expected"], 1, "manifest.checks.version_output_matches_expected"), True),
     # workflow identity against the trusted CI context
     ("workflow-sha-mismatch", m_set(["workflow", "workflow_sha"], "0" * 40, "workflow.workflow_sha"), True),
-    ("workflow-commit-mismatch", m_set(["workflow", "sha"], OTHER, "workflow.sha"), True),
-    ("source-commit-mismatch", m_set(["source", "commit"], OTHER, "source.commit"), True),
-    ("run-id-wrong", m_set(["workflow", "run_id"], "42543200625", "workflow.run_id"), True),
-    ("run-attempt-wrong", m_set(["workflow", "run_attempt"], "2", "workflow.run_attempt"), True),
-    ("repository-wrong", m_set(["workflow", "repository"], "someone/myzephyr", "workflow.repository"), True),
+    ("workflow-commit-mismatch", m_set(["workflow", "sha"], other, "workflow.sha"), True),
+    ("source-commit-mismatch", m_set(["source", "commit"], other, "source.commit"), True),
+    ("run-id-wrong", m_set(["workflow", "run_id"], other, "workflow.run_id"), True),
+    ("run-attempt-wrong", m_set(["workflow", "run_attempt"], other, "workflow.run_attempt"), True),
+    ("repository-wrong", m_set(["workflow", "repository"], other, "workflow.repository"), True),
     ("workflow-ref-wrong", m_set(["workflow", "workflow_ref"], lambda v: v.replace("daemon-release-baseline.yml", "other.yml"), "workflow.workflow_ref"), True),
-    ("ref-wrong", m_set(["workflow", "ref"], "refs/heads/other", "workflow.ref"), True),
+    ("ref-wrong", m_set(["workflow", "ref"], other, "workflow.ref"), True),
     ("producer-job-wrong", m_set(["workflow", "job"], "unit-tests", "workflow.job"), True),
     ("local-build", local_build, True),
     # base and signer policy
@@ -413,8 +431,8 @@ NEGATIVE = [
     ("symlink-binary", symlink_binary, True),
     ("symlink-log", symlink_log, True),
     # trusted inputs differ from an unchanged artifact
-    ("trusted-run-attempt-2", trusted("run-attempt", "2", "workflow.run_attempt"), False),
-    ("trusted-other-repository", trusted("repository", "someone/myzephyr", "workflow.repository"), False),
+    ("trusted-run-attempt-next", trusted("run-attempt", other, "workflow.run_attempt"), False),
+    ("trusted-other-repository", trusted("repository", other, "workflow.repository"), False),
     ("trusted-elf-report-failed", trusted_elf_failed, False),
     ("trusted-recipe-changed", trusted_recipe_changed, False),
     ("trusted-tag-at-head", trusted_identity_edit("tags_at_head=none", "tags_at_head=v2.3.0-sec.2-my.1", "trusted identity tags_at_head"), False),
@@ -424,7 +442,7 @@ NEGATIVE = [
     ("table-trusted-event-dispatch", trusted("event-name", "workflow_dispatch", "trusted run identity not in the table"), False),
     ("table-trusted-ref-main", trusted("ref", "refs/heads/main", "trusted run identity not in the table"), False),
     ("table-trusted-ref-tag", trusted("ref", "refs/tags/v2.3.0-sec.2-my.1", "trusted run identity not in the table"), False),
-    ("table-trusted-github-sha-not-built", trusted("github-sha", OTHER, "trusted run identity not in the table"), False),
+    ("table-trusted-github-sha-not-built", trusted("github-sha", other, "trusted run identity not in the table"), False),
     ("table-trusted-pr-on-push", trusted("pull-request", json.dumps({"number": 7, "base_ref": "my/v2.3.0", "base_sha": BASE_TIP,
         "head_sha": "e66283f3812e8ebac7911ea55146267effc24150", "head_ref": "pr/x", "head_repository": "loki-notfound/myzephyr"}),
         "trusted run identity not in the table"), False),
@@ -444,17 +462,17 @@ VARIANT_NEGATIVE = [
     ("my", "my-trusted-ref-no-name", trusted("ref", "refs/heads/my", "trusted run identity not in the table"), False),
     ("my", "my-trusted-ref-mine", trusted("ref", "refs/heads/mine/v2.3.0", "trusted run identity not in the table"), False),
     ("my", "my-manifest-ref-other-branch", m_set(["workflow", "ref"], "refs/heads/my/v2.4.0", "workflow.ref"), True),
-    ("pr", "pr-trusted-head-not-built", trusted_pr("head_sha", OTHER, "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-head-not-built", trusted_pr("head_sha", other, "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-base-master", trusted_pr("base_ref", "master", "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-base-security", trusted_pr("base_ref", "security/v2.3.0", "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-head-under-my", trusted_pr("head_ref", "my/v2.3.0-candidate", "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-head-ci-branch", trusted_pr("head_ref", "ci/daemon-release-baseline", "trusted run identity not in the table"), False),
-    ("pr", "pr-trusted-number-mismatch", trusted_pr("number", 8, "trusted run identity not in the table"), False),
+    ("pr", "pr-trusted-number-mismatch", trusted_pr("number", other, "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-merge-is-built", lambda d, t: (t.__setitem__("github-sha", t["expected-commit"]), "trusted run identity not in the table")[1], False),
     ("pr", "pr-trusted-ref-pull-head", trusted("ref", "refs/pull/7/head", "trusted run identity not in the table"), False),
     ("pr", "pr-trusted-no-pr-fields", trusted("pull-request", "none", "trusted run identity not in the table"), False),
-    ("pr", "pr-manifest-number", manifest_pr("number", 8, "workflow.pull_request"), True),
-    ("pr", "pr-manifest-head", manifest_pr("head_sha", OTHER, "workflow.pull_request"), True),
+    ("pr", "pr-manifest-number", manifest_pr("number", other, "workflow.pull_request"), True),
+    ("pr", "pr-manifest-head", manifest_pr("head_sha", other, "workflow.pull_request"), True),
     ("pr", "pr-manifest-sha-is-built", manifest_case(lambda m, t: (m["workflow"].__setitem__("sha", t["expected-commit"]), "workflow.sha")[1]), True),
     ("pr", "pr-manifest-event-push", m_set(["workflow", "event_name"], "push", "manifest.workflow.pull_request: type object"), True),
     # both sides changed alike, valid for the schema: the table itself must refuse the combination

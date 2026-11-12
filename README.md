@@ -15,7 +15,9 @@ Own commits above the base:
 - Build and test tooling: `contrib/myzephyr/` and
   `.github/workflows/daemon-release-baseline.yml`. It builds the daemon for Linux x86_64,
   Linux AArch64, macOS x86_64, macOS arm64 (Apple Silicon; upstream ships no such daemon)
-  and Windows x86_64.
+  and Windows x86_64. The macOS arm64 daemon's native start test (on the hosted macOS 15
+  and macOS 26 Apple Silicon images) depends on runner availability and is not a required
+  check; its build and static checks are.
 - The GoogleTest recipe of `contrib/depends` (used only for unit-test builds) uses the
   compiler and tools depends selected instead of assuming they are in its native tool
   directory, and builds the requested Debug type.
