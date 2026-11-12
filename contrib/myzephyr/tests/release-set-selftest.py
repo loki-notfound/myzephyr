@@ -15,6 +15,13 @@ written but "incomplete"); a version "release", a target disagreeing on the comm
 run, a binary not matching its manifest, an inventory not matching the manifest, a licence
 text not matching its inventory hash (each: refused, exit 1). A licence text taken from a
 source header (kind tree-header) is accepted, "complete", and marked in INDEX.txt.
+Round 16: inputs made in the build tree ("build:<dir>") need no text, the owners of linked
+objects' sources ("compiled" rows) do; a source-header statement naming LICENSE_1_0.txt gets
+an INDEX.txt note pointing at the text of that name. Source tarballs (owner decision: GNU
+readline): the Linux and macOS artifacts link a synthetic depends:readline and carry its
+synthetic source tarball; the set holds it once as a flat file, in SHA256SUMS, in those three
+manifests and README.txt files, not in Windows'; a linked readline without the tarball, a
+tarball whose hash is not the pin, and tarballs that differ between platforms are refused.
 """
 import copy
 import gzip
@@ -59,6 +66,11 @@ open(os.path.join(co, "LICENSE"), "w").write("tree licence (synthetic)\n")
 src_tarball = b"synthetic dep source"
 open(os.path.join(co, "contrib", "depends", "packages", "dep.mk"), "w").write(
     f"$(package)_version=1.0\n$(package)_sha256_hash={hashlib.sha256(src_tarball).hexdigest()}\n")
+rl_tarball = b"synthetic readline source tarball, not the real one\n"
+RL_PIN = hashlib.sha256(rl_tarball).hexdigest()
+open(os.path.join(co, "contrib", "depends", "packages", "readline.mk"), "w").write(
+    f"package=readline\n$(package)_version=8.0\n$(package)_sha256_hash={RL_PIN}\n")
+RL = ("linux-x86_64", "linux-aarch64", "macos-x86_64")
 sh("git", "init", "-q", co)
 sh("git", "-C", co, *genv, "add", "-A"); sh("git", "-C", co, *genv, "commit", "-q", "-m", "base")
 own = []
@@ -90,7 +102,20 @@ def make_artifact(d, plat):
             ("license", "licenses/tree/LICENSE", "tree:src/daemon", h["licenses/tree/LICENSE"], "tree path=LICENSE"),
             ("license", "licenses/tree/external/ext/LICENSE", "tree:external/ext", h["licenses/tree/external/ext/LICENSE"], "tree path=external/ext/LICENSE"),
             ("license", "licenses/depends/dep/COPYING", "depends:dep", h["licenses/depends/dep/COPYING"],
-             f"depends source=dep-1.0.tar.gz source_sha256={hashlib.sha256(src_tarball).hexdigest()} member=dep-1.0/COPYING")]
+             f"depends source=dep-1.0.tar.gz source_sha256={hashlib.sha256(src_tarball).hexdigest()} member=dep-1.0/COPYING"),
+            ("input", "/src/build/release/src/crypto/wallet/libwallet-crypto.a", "build:src/crypto/wallet", "6" * 64, "used members=1"),
+            ("compiled", "/src/build/release/src/crypto/wallet/libwallet-crypto.a(x.c.o)", "tree:external/ext", "7" * 64,
+             "source=external/ext/x.c object=build/release/x/CMakeFiles/x.dir/x.c.o")]
+    if plat in RL:
+        os.makedirs(os.path.join(logs, "licenses", "depends", "readline"))
+        os.makedirs(os.path.join(logs, "depends-sources"))
+        open(os.path.join(logs, "licenses", "depends", "readline", "COPYING"), "w").write("readline licence (synthetic)\n")
+        open(os.path.join(logs, "depends-sources", "readline-8.0.tar.gz"), "wb").write(rl_tarball)
+        rows += [("input", f"/src/contrib/depends/{target}/lib/libreadline.a", "depends:readline", "8" * 64, "used members=2"),
+                 ("license", "licenses/depends/readline/COPYING", "depends:readline", sha(os.path.join(logs, "licenses", "depends", "readline", "COPYING")),
+                  f"depends source=readline-8.0.tar.gz source_sha256={RL_PIN} member=readline-8.0/COPYING"),
+                 ("source-tarball", "depends-sources/readline-8.0.tar.gz", "depends:readline", RL_PIN,
+                  f"depends source=readline-8.0.tar.gz source_sha256={RL_PIN} stamp=.stamp_fetched-readline-readline-8.0.tar.gz.hash")]
     write_inventory(d, rows)
     m = {"schema": "synthetic", "artifact": {"name": binary, "target": target, "expected_version": version,
                                               "sha256": sha(os.path.join(d, binary)), "size": os.path.getsize(os.path.join(d, binary))},
@@ -139,11 +164,12 @@ p, out = run("valid", d)
 record("valid set written", p.returncode == 0, p.stderr[-400:])
 names = sorted(os.listdir(out)) if os.path.isdir(out) else []
 want = sorted([f"zephyrd-{vs}-{pl}.{'zip' if pl.startswith('windows') else 'tar.gz'}" for pl in PLAT] +
-              [f"zephyrd-{vs}-{pl}.manifest.json" for pl in PLAT] + ["SHA256SUMS"])
-record("exactly four archives, four manifests and SHA256SUMS", names == want, names)
+              [f"zephyrd-{vs}-{pl}.manifest.json" for pl in PLAT] + ["SHA256SUMS", "readline-8.0.tar.gz"])
+record("exactly four archives, four manifests, the readline source tarball and SHA256SUMS", names == want, names)
 if names == want:
     sums = [l.split("  ") for l in open(os.path.join(out, "SHA256SUMS")).read().splitlines()]
-    record("SHA256SUMS lists the eight files, not itself, hashes match",
+    record("readline source tarball: the same bytes as the build carried (= the pin)", sha(os.path.join(out, "readline-8.0.tar.gz")) == RL_PIN)
+    record("SHA256SUMS lists the nine files, not itself, hashes match",
            sorted(n for _, n in sums) == sorted(n for n in want if n != "SHA256SUMS")
            and all(sha(os.path.join(out, n)) == h for h, n in sums))
     for pl, (target, binary) in PLAT.items():
@@ -169,8 +195,17 @@ if names == want:
         record(f"{pl}: fixed layout with binary, LICENSE, THIRD-PARTY-LICENSES, README.txt", layout <= set(members), members)
         record(f"{pl}: unpacked binary is the manifest's, mode 0755", bin_ok)
         record(f"{pl}: fixed archive metadata (time, owner, no gzip name or time)", meta_ok)
-        record(f"{pl}: licences complete, three texts", man["third_party_licenses"]["status"] == "complete"
-               and len(man["third_party_licenses"]["entries"]) == 3, man["third_party_licenses"])
+        record(f"{pl}: licences complete, {4 if pl in RL else 3} texts (build:<dir> needs none, compiled owner covered)",
+               man["third_party_licenses"]["status"] == "complete"
+               and len(man["third_party_licenses"]["entries"]) == (4 if pl in RL else 3), man["third_party_licenses"])
+        st = man["source_tarballs"]
+        if pl in RL:
+            rd = (tarfile.open(os.path.join(out, top + ".tar.gz")).extractfile(f"{top}/README.txt").read().decode())
+            record(f"{pl}: manifest and README name the readline source tarball", len(st) == 1 and st[0]["file"] == "readline-8.0.tar.gz"
+                   and st[0]["sha256"] == RL_PIN == st[0]["pinned_sha256"] and st[0]["licence_text"] == "THIRD-PARTY-LICENSES/depends/readline/COPYING"
+                   and "readline-8.0.tar.gz, published next to this archive" in rd and "GNU readline" in rd, (st, rd[-600:]))
+        else:
+            record(f"{pl}: no readline, no source tarball in its manifest", st == [], st)
         record(f"{pl}: manifest names commit, run, version and own commit subjects",
                man["source"]["commit"] == commit and man["workflow"]["run_id"] == "5" and man["version_string"] == vs
                and [c["subject"] for c in man["source"]["own_commits"]] == ["Add the first own change", "Add the second own change"])
@@ -212,7 +247,7 @@ variant("no-inventory", lambda dv: (os.remove(os.path.join(dv, "linux-x86_64", "
         0, "no link inventory", "incomplete")
 variant("used-owner-without-text", lambda dv: edit_inv(dv, "linux-x86_64", lambda r: r + [["input", "/src/x/libnew.a", "tree:external/new", "4" * 64, "used members=1"]]),
         0, "no licence text for tree:external/new", "incomplete")
-variant("depends-hash-not-pinned", lambda dv: edit_inv(dv, "linux-x86_64", lambda r: [x if x[0] != "license" or "depends" not in x[4] else x[:4] + [x[4].replace("source_sha256=", "source_sha256=0")[:-1]] for x in r]),
+variant("depends-hash-not-pinned", lambda dv: edit_inv(dv, "linux-x86_64", lambda r: [x if x[0] != "license" or x[2] != "depends:dep" else x[:4] + [x[4].replace("source_sha256=", "source_sha256=0")[:-1]] for x in r]),
         0, "is not the pinned", "incomplete")
 variant("relink-not-identical", lambda dv: edit_inv(dv, "linux-x86_64", lambda r: [x if x[1] != "relink_identical" else x[:4] + ["no"] for x in r]),
         0, "traced re-link not identical", "incomplete")
@@ -243,6 +278,25 @@ variant("other-run", one("windows-x86_64", lambda m: m["workflow"].__setitem__("
 variant("binary-changed", lambda dv: open(os.path.join(dv, "linux-aarch64", "zephyrd"), "ab").write(b"x"), 1, "binary does not match its manifest")
 variant("inventory-not-in-manifest", lambda dv: open(os.path.join(dv, "linux-x86_64", "build-logs", "link-inventory.tsv"), "a").write("status\tx\t-\t-\ty\n"),
         1, "does not match the verified manifest")
+def no_tarball(dv):
+    os.remove(os.path.join(dv, "macos-x86_64", "build-logs", "depends-sources", "readline-8.0.tar.gz"))
+variant("readline-linked-tarball-missing", no_tarball, 1, "missing from the build artifact")
+
+
+def tarball_not_pin(dv):
+    bad = b"other bytes"
+    hb = hashlib.sha256(bad).hexdigest()
+    pd = os.path.join(dv, "linux-aarch64")
+    open(os.path.join(pd, "build-logs", "depends-sources", "readline-8.0.tar.gz"), "wb").write(bad)
+    edit_inv(dv, "linux-aarch64", lambda r: [x if "readline" not in x[2] or x[0] == "input" else
+                                             x[:3] + ([hb] if x[0] == "source-tarball" else [x[3]]) + [x[4].replace(RL_PIN, hb)] for x in r])
+variant("readline-tarball-not-the-pin", tarball_not_pin, 1, f"pin {RL_PIN}")
+
+
+def no_row(dv):
+    edit_inv(dv, "linux-x86_64", lambda r: [x for x in r if x[0] != "source-tarball"])
+variant("readline-linked-no-tarball-row", no_row, 1, "carries 0 source tarballs")
+
 variant("licence-text-changed", lambda dv: open(os.path.join(dv, "linux-x86_64", "build-logs", "licenses", "depends", "dep", "COPYING"), "a").write("x"),
         1, "does not match its inventory hash")
 
@@ -272,6 +326,39 @@ record("licence text from a source header: accepted, kind tree-header, status co
        p.returncode == 0 and lic.get("status") == "complete" and len(eh) == 1 and eh[0]["kind"] == "tree-header"
        and eh[0]["source"].get("from") == "source-header" and eh[0]["source"].get("lines") == "1-3"
        and "FROM SOURCE HEADER" in idx and "file=external/ext/ext.h lines=1-3" in idx, (p.stdout + p.stderr)[-300:])
+
+# a source-header statement naming LICENSE_1_0.txt: INDEX.txt points at the depends text of that name
+def boost_case(dv):
+    pd = os.path.join(dv, "windows-x86_64")
+    logs = os.path.join(pd, "build-logs")
+    os.makedirs(os.path.join(logs, "licenses", "depends", "boost"))
+    os.makedirs(os.path.join(logs, "licenses", "tree-header", "external", "boost", "archive"))
+    open(os.path.join(logs, "licenses", "depends", "boost", "LICENSE_1_0.txt"), "w").write("Boost Software License (synthetic)\n")
+    st = "licenses/tree-header/external/boost/archive/a.hpp.lines-4-7.txt"
+    open(os.path.join(logs, st), "w").write("// Use, modification and distribution is subject to the Boost Software\n"
+                                           "// License, Version 1.0. (See accompanying file LICENSE_1_0.txt or copy at\n")
+    open(os.path.join(co, "contrib", "depends", "packages", "boost.mk"), "a").close()
+    edit_inv(dv, "windows-x86_64", lambda r: r + [
+        ["header", "/src/external/boost/archive", "tree:external/boost/archive", "-", "headers compiled into the linked objects"],
+        ["license", st, "tree:external/boost/archive", sha(os.path.join(logs, st)),
+         "tree-header from=source-header file=external/boost/archive/a.hpp lines=4-7 file_sha256=" + "9" * 64],
+        ["license", "licenses/depends/boost/LICENSE_1_0.txt", "depends:boost", sha(os.path.join(logs, "licenses", "depends", "boost", "LICENSE_1_0.txt")),
+         f"depends source=boost.tar.gz source_sha256={hashlib.sha256(src_tarball).hexdigest()} member=boost/LICENSE_1_0.txt"]])
+
+
+dv = base_set("boost-note")
+boost_case(dv)
+open(os.path.join(co, "contrib", "depends", "packages", "boost.mk"), "w").write(
+    f"$(package)_version=1\n$(package)_sha256_hash={hashlib.sha256(src_tarball).hexdigest()}\n")
+p, outv = run("boost-note", dv)
+idx = ""
+if p.returncode == 0:
+    with zipfile.ZipFile(os.path.join(outv, f"zephyrd-{vs}-windows-x86_64.zip")) as zf:
+        idx = zf.read(f"zephyrd-{vs}-windows-x86_64/THIRD-PARTY-LICENSES/INDEX.txt").decode()
+record("statement naming LICENSE_1_0.txt: INDEX.txt points at the text of that name (depends:boost)",
+       p.returncode == 0 and "The statement names LICENSE_1_0.txt; a text of that name is in this archive:" in idx
+       and "THIRD-PARTY-LICENSES/depends/boost/LICENSE_1_0.txt (owner depends:boost)" in idx, (p.stdout + p.stderr)[-300:] + idx[-600:])
+os.remove(os.path.join(co, "contrib", "depends", "packages", "boost.mk"))
 
 # compare-pr-run.py against a loopback stub of the REST API (synthetic runs and artifact names)
 import threading

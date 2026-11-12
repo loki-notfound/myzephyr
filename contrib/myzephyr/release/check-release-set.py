@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Check a downloaded release set against the run and the tagged commit; write the release notes.
 
-  check-release-set.py --dir D --commit SHA --repository OWNER/NAME --ref REF --run-id N
-                       --run-attempt N --run-url URL --tag NAME --notes FILE [--reports FILE]
+  check-release-set.py --dir D --checkout DIR --commit SHA --repository OWNER/NAME --ref REF
+                       --run-id N --run-attempt N --run-url URL --tag NAME --notes FILE
+                       [--reports FILE]
 
 Used by draft-release.sh after it has verified the run, the tag and GitHub's digest of the
 artifact. Checks, each fatal (exit 1):
-  files     D holds only regular files: exactly SHA256SUMS, four archives and four manifests
-            (one per platform), plain names; SHA256SUMS lists every other file once, never
-            itself, and every hash matches;
+  files     D holds only regular files: exactly SHA256SUMS, four archives, four manifests
+            (one per platform) and the source tarballs the manifests name, plain names;
+            SHA256SUMS lists every other file once, never itself, and every hash matches;
   manifest  each zephyrd-<version>-<platform>.manifest.json is strict JSON, valid against
             release-target.schema.json next to this script; its commit is --commit, its run
             is --run-id and --run-attempt, event push on --ref of --repository; its version
@@ -18,7 +19,14 @@ artifact. Checks, each fatal (exit 1):
   archive   each archive unpacks to exactly one top directory zephyrd-<version>-<platform>/
             with the binary (mode 0755, the manifest's and the build manifest's hash),
             LICENSE, README.txt and THIRD-PARTY-LICENSES/INDEX.txt, and no link or path
-            outside it.
+            outside it;
+  sources   a manifest whose licence list names a package of SOURCE_WITH_RELEASE (owner
+            decision: GNU readline, depends:readline) must name its source tarball in
+            "source_tarballs"; that file must be in D and in SHA256SUMS with the manifest's
+            hash, and the hash must equal the pin in --checkout (the verified checkout of the
+            tagged commit) contrib/depends/packages/<package>.mk. A manifest that does not
+            name such a package needs no tarball (Windows); a tarball no manifest names is
+            refused.
 Prints the flat file list (one name per line, SHA256SUMS last) and writes Markdown notes to
 --notes: what the release is, base, own commits with the upstream report each was sent as
 (--reports: lines "<commit> <text>"; otherwise "not yet reported"), platforms and what the
@@ -43,6 +51,16 @@ _spec.loader.exec_module(va)
 PLATFORMS = {"linux-x86_64": ("zephyrd", "tar.gz"), "linux-aarch64": ("zephyrd", "tar.gz"),
              "macos-x86_64": ("zephyrd", "tar.gz"), "windows-x86_64": ("zephyrd.exe", "zip")}
 SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+SOURCE_WITH_RELEASE = ("readline",)
+
+
+def pinned_hash(checkout, pkg):
+    """The source SHA256 pinned in <checkout>/contrib/depends/packages/<pkg>.mk, or None."""
+    p = os.path.join(checkout, "contrib", "depends", "packages", f"{pkg}.mk")
+    if not os.path.isfile(p):
+        return None
+    m = re.search(r"^\$\(package\)_sha256_hash=([0-9a-f]{64})\s*$", open(p, encoding="utf-8").read(), re.M)
+    return m.group(1) if m else None
 
 
 class Refused(Exception):
@@ -162,6 +180,30 @@ def check(a):
             if by_name.get(f"{top}/{need}", ("",))[0] != "f":
                 raise Refused(f"{plat}: {need} missing from the archive")
         mans[plat] = m
+    # source tarballs (owner decision): required where the licence list names the package
+    named = {}
+    for plat, m in mans.items():
+        owners = {e["owner"] for e in m["third_party_licenses"]["entries"]}
+        listed = {t["package"]: t for t in m["source_tarballs"]}
+        for pkg in SOURCE_WITH_RELEASE:
+            if f"depends:{pkg}" in owners and pkg not in listed:
+                raise Refused(f"{plat}: the licence list names depends:{pkg} but the manifest names no source tarball of it")
+        for pkg, t in listed.items():
+            pin = pinned_hash(a.checkout, pkg)
+            if pkg not in SOURCE_WITH_RELEASE or f"depends:{pkg}" not in owners:
+                raise Refused(f"{plat}: source tarball of {pkg} named, but {pkg} is not a linked package whose source goes with the release")
+            if t["file"] not in names or sums.get(t["file"]) != t["sha256"]:
+                raise Refused(f"{plat}: source tarball {t['file']} missing from the set or not in SHA256SUMS with the manifest's hash")
+            if pin is None or t["sha256"] != pin or t["pinned_sha256"] != pin:
+                raise Refused(f"{plat}: source tarball {t['file']} has {t['sha256']}, the pin in the checkout is {pin}")
+            if os.path.getsize(os.path.join(d, t["file"])) != t["size"]:
+                raise Refused(f"{plat}: source tarball {t['file']} size differs from the manifest")
+            if named.setdefault(t["file"], t["sha256"]) != t["sha256"]:
+                raise Refused(f"source tarball {t['file']} named with different hashes")
+    expected = {"SHA256SUMS"} | {m["archive"]["name"] for m in mans.values()} | {m["manifest_name"] for m in mans.values()} | set(named)
+    if set(names) != expected:
+        raise Refused(f"the set holds {sorted(set(names) - expected)} beyond, or lacks {sorted(expected - set(names))} of, "
+                      "SHA256SUMS, four archives, four manifests and the named source tarballs")
     return names, mans, vs
 
 
@@ -201,14 +243,18 @@ def notes(a, mans, vs):
               "`README.txt` says how to replace an upstream `zephyrd` (stop, keep the data directory, swap the binary, "
               "start with the same paths, ports and options).", "",
               "Licences: each archive holds `LICENSE` and `THIRD-PARTY-LICENSES/` (texts of everything linked into that "
-              "binary, listed in `INDEX.txt`).", "",
+              "binary, listed in `INDEX.txt`)." + "".join(
+                  f" `{t['file']}` is the source of {t['name']} exactly as the build fetched and hash-checked it, published "
+                  f"because {t['name']} is linked into the binaries of " + ", ".join(
+                      pl for pl in PLATFORMS if any(x["file"] == t["file"] for x in mans[pl]["source_tarballs"])) + "."
+                  for t in {x["file"]: x for m in mans.values() for x in m["source_tarballs"]}.values()), "",
               f"Built by {a.run_url} (push to `{a.ref}`)."]
     return "\n".join(lines) + "\n"
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    for n in ("dir", "commit", "repository", "ref", "run-id", "run-attempt", "run-url", "tag", "notes"):
+    for n in ("dir", "checkout", "commit", "repository", "ref", "run-id", "run-attempt", "run-url", "tag", "notes"):
         p.add_argument(f"--{n}", required=True)
     p.add_argument("--reports")
     a = p.parse_args()

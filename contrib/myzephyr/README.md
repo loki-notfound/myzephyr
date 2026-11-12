@@ -88,7 +88,8 @@ the tag locally): with the tag present the build would print `<version>-release`
 | `make-manifest.py`, `manifest.schema.json` | build manifest (`myzephyr/daemon-build-manifest/3`): source commit with `tags_at_head: none` and the fetch mode, signed base, workflow run (with the pull request for a pull-request run), recipe, builder, packages, ELF requirements, artifact hash |
 | `verify-artifact.py` | checks a downloaded release artifact against trusted inputs (see below) |
 | `zephyrd-check.py` | bounded offline-start and default-discovery checks with strict RPC assertions on every sample |
-| `link-inventory.sh` | runs in the builder after the build: re-runs the daemon's link with the linker's trace option, assigns every used input (object, archive member, start file) to its owner (a depends package by its cached build tarball, the source tree, or a Debian package of the image by `dpkg -S`) and copies the licence texts (top of the hash-stamped depends source, `/usr/share/doc/<package>/copyright`, the tree's licence files); anything it cannot establish is an `unresolved` line |
+| `link-inventory.sh` | runs in the builder after the build: re-runs the daemon's link line (only that line of `link.txt`; output in a temporary directory under the same file name, in the build's environment) with the linker's trace option and requires a byte-identical result, assigns every used input (object, archive member, start file) to its owner (a depends package by its cached build tarball, a Debian package of the image by `dpkg -S`; an archive or object made in the build tree is traced to the sources its linked objects were compiled from), and copies the licence texts (top of the hash-stamped depends source, `/usr/share/doc/<package>/copyright`, the tree's licence files, or the licence statements in the head of every compiled-in file of a directory without one); the GNU readline source tarball is copied from the depends cache for the release set; anything it cannot establish is an `unresolved` line |
+| `link-sources.py` | helpers of `link-inventory.sh`: archive member → object file (same bytes) → source (CMake `DependInfo.cmake`) and each object's dependency record; the PE timestamp; the byte ranges in which two files differ |
 | `release/make-release-set.py`, `release/release-target.schema.json` | the release set of one run: an archive per platform, a manifest per platform (`myzephyr/daemon-release-target/1`) and `SHA256SUMS` (see "Release set") |
 | `release/draft-release.sh`, `release/check-release-set.py` | run locally by the owner after the tag exists, never in CI: checks the run, the tag (`verify-source.sh --release-tag`), GitHub's digest of the release-set artifact and the set itself, then makes a draft release (`--dry-run` prints the command instead); see "Release set" |
 | `release/compare-pr-run.py` | on a push run: the binary hashes of the pull-request run of the same commit, read from its hash marker artifacts' names, side by side in the run summary; reported, never a gate |
@@ -110,14 +111,17 @@ without name or time), Windows a `.zip` with fixed entry times and modes; SOURCE
 the commit time. Each archive is read back and must hold exactly the staged files and the
 binary whose hash the build manifest names. A manifest per platform records archive and
 binary hashes, the verified build manifest, source, base, own commits, the run, what the
-hosted runners tested, and the licence list. `SHA256SUMS` lists the archives and manifests,
-never itself. The set is one artifact, `release-set-<commit>`, kept 90 days on pushes to
+hosted runners tested, the licence list and the source tarballs published with it.
+`SHA256SUMS` lists the archives, the manifests and those source tarballs, never itself. The
+GNU readline source tarball (linked into the Linux and macOS daemons) is published as a
+separate file, exactly as depends fetched and hash-checked it in the build (carried in the
+build artifact, never downloaded again), and named in those manifests and README files. The set is one artifact, `release-set-<commit>`, kept 90 days on pushes to
 `my/**`.
 
 `THIRD-PARTY-LICENSES/` comes from the build's link inventory (`link-inventory.sh`), whose
 hash the build manifest records (`build.link_inventory_sha256`, checked by the verifiers).
 The list is "complete" only if the traced re-link was identical, nothing is unresolved,
-every used input's owner has a text and every depends source hash equals its pin in
+every used owner has a text and every depends source hash equals its pin in
 `contrib/depends/packages/`; otherwise the set is written with status "incomplete" and the
 reasons (manifest, `INDEX.txt`, `README.txt`, a warning in the job log), and the release
 script refuses it. The list is reviewed before any release.
@@ -128,7 +132,8 @@ run of this workflow on `my/v2.3.0` whose head commit is the tag's commit (the b
 or an ancestor of it), verifies the tag in a fresh clone without tags (annotated, signed by
 the pinned maintainer key, name `v*-sec.*-my.*`), downloads the run's `release-set-<commit>`
 artifact and checks GitHub's digest, `SHA256SUMS`, every manifest (commit, run and attempt,
-version string without `release`, complete licences) and every archive, refuses if a
+version string without `release`, complete licences, the readline source tarball with its
+pinned hash wherever a manifest names readline) and every archive, refuses if a
 release for the tag exists, and runs `gh release create --draft --verify-tag` with exactly
 those files and notes made from the manifests. It never publishes and never signs;
 `--dry-run` prints the command and file list. `tests/draft-release-selftest.py` runs it

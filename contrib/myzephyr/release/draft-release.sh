@@ -23,7 +23,9 @@
 #  4. The artifact release-set-<commit> of that run: not expired; its zip is downloaded and
 #     must have GitHub's recorded digest; then check-release-set.py: SHA256SUMS, every
 #     manifest (commit, run and attempt, version string without "release", complete
-#     licences), every archive unpacks to the named binary. It writes the release notes.
+#     licences), every archive unpacks to the named binary, and the GNU readline source
+#     tarball is present with the pinned hash (of the verified clone's recipe) wherever a
+#     manifest's licence list names readline. It writes the release notes.
 #  5. gh release create <tag> --draft --verify-tag with exactly the flat files of the set
 #     (a quoted array) and the notes. With --dry-run everything except this step runs, and the
 #     exact command and file list are printed.
@@ -132,7 +134,7 @@ for n in z.namelist():
     if "/" in n or n.startswith(".") or n == "":
         sys.exit(f"artifact member {n!r} is not a flat file name")
 z.extractall(sys.argv[2])' "$workdir/release-set.zip" "$workdir/set" || refuse "release set is not a flat set of files"
-files_list=$("$PY" -I "$here/check-release-set.py" --dir "$workdir/set" --commit "$tag_commit" --repository "$repo" \
+files_list=$("$PY" -I "$here/check-release-set.py" --dir "$workdir/set" --checkout "$clone" --commit "$tag_commit" --repository "$repo" \
   --ref "refs/heads/$branch" --run-id "$run" --run-attempt "$attempt" --run-url "$run_url" --tag "$tag" \
   --notes "$workdir/notes.md" ${reports:+--reports "$reports"}) || refuse "release set check failed"
 files=()

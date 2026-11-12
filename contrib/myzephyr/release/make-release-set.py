@@ -25,11 +25,22 @@ Archive per platform, fixed layout, named by the version string (the tag does no
   time); .zip for Windows with SOURCE_DATE_EPOCH as every entry's time, sorted entries and
   fixed modes. SOURCE_DATE_EPOCH is the commit time of the built commit.
 Licence completeness: "complete" only if the inventory exists and is the one the verified
-manifest names, the traced re-link was identical, nothing is unresolved, every used input's
-owner has a licence text, and every depends source hash equals the pin in the checkout's
-contrib/depends/packages/*.mk; otherwise "incomplete" with the reasons, in the manifest and
-README. draft-release.sh refuses an incomplete set; this script still writes it, so every run
-shows the list for review.
+manifest names, the traced re-link was identical, nothing is unresolved, every used owner
+(of a used input other than a build-tree product "build:<dir>", of a linked object's source
+("compiled" rows) and of compiled-in headers) has a licence text, and every depends source hash
+equals the pin in the checkout's contrib/depends/packages/*.mk; otherwise "incomplete" with
+the reasons, in the manifest and README. draft-release.sh refuses an incomplete set; this
+script still writes it, so every run shows the list for review. INDEX.txt notes, for a text
+from a source header that names a licence file (e.g. "accompanying file LICENSE_1_0.txt"),
+where a text of that file name is in the same archive.
+Source tarballs (SOURCE_WITH_RELEASE, owner decision: GNU readline): for every platform whose
+inventory has such a package as a used owner, the build artifact must carry the tarball its
+link inventory copied from the build's own depends source cache ("source-tarball" row,
+build-logs/depends-sources/<file>); its hash must equal the row, the stamped source hash of
+the package's licence texts and the pin in the checkout's recipe. It is added to the set as a
+flat file (same bytes for every platform), listed in SHA256SUMS, in the manifests of the
+platforms that link it ("source_tarballs") and in their README.txt. Missing or different:
+exit 1 (never skipped).
 Per-platform manifest zephyrd-<version string>-<platform>.manifest.json
 (release-target.schema.json). SHA256SUMS lists the archives and the manifests, never itself.
 After writing, every archive is unpacked again and must yield exactly the layout and the
@@ -51,7 +62,9 @@ import tarfile
 import tempfile
 import zipfile
 
-SCHEMA = "myzephyr/daemon-release-target/1"
+SCHEMA = "myzephyr/daemon-release-target/2"
+# depends packages whose source tarball goes with the release set (owner decision 2026-11-11)
+SOURCE_WITH_RELEASE = {"readline": "GNU readline"}
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
 _spec = importlib.util.spec_from_file_location("verify_artifact", os.path.join(os.path.dirname(HERE), "verify-artifact.py"))
@@ -177,7 +190,8 @@ def licences(platform, art, manifest, checkout, stage):
     for r in rows:
         if r["kind"] == "status" and r["path"] == "unresolved":
             reasons.append(f"unresolved: {r['owner']}: {r['detail']}")
-    used = sorted({r["owner"] for r in rows if (r["kind"] == "input" and r["detail"].startswith("used")) or r["kind"] == "header"})
+    used = sorted({r["owner"] for r in rows if (r["kind"] == "input" and r["detail"].startswith("used") and not r["owner"].startswith("build:"))
+                   or r["kind"] == "header" or (r["kind"] == "compiled" and r["owner"] != "unknown")})
     covered = {r["owner"] for r in rows if r["kind"] in ("license", "license-ref")}
     for o in used:
         if o not in covered:
@@ -204,9 +218,23 @@ def licences(platform, art, manifest, checkout, stage):
             if pin is None or pin != detail.get("source_sha256"):
                 reasons.append(f"{r['owner']}: source hash {detail.get('source_sha256')} is not the pinned {pin}")
         entries.append(e)
-        note = ("\n    FROM SOURCE HEADER: the verbatim leading comment block of the file named below; the library"
-                "\n    ships no licence file") if e["kind"] == "tree-header" else ""
-        index.append(f"{rel}\n    owner {r['owner']}{note}\n    from {r['detail']}\n    sha256 {r['sha256']}")
+        note = ("\n    FROM SOURCE HEADER: a verbatim comment block from the head of the file named below; its"
+                "\n    directory ships no licence file") if e["kind"] == "tree-header" else ""
+        index.append([rel, r, note, src if e["kind"] == "tree-header" else None])
+    by_base = {}
+    for rel, r, _, _ in index:
+        by_base.setdefault(os.path.basename(rel), []).append((rel, r["owner"]))
+    lines_out = []
+    for rel, r, note, hsrc in index:
+        if hsrc:
+            text = open(hsrc, encoding="utf-8", errors="replace").read()
+            for name in sorted(set(re.findall(r"[A-Za-z0-9_.-]*(?:LICEN[CS]E|COPYING)[A-Za-z0-9_.-]*", text))):
+                for orel, oown in by_base.get(name, []):
+                    if orel != rel:
+                        note += (f"\n    The statement names {name}; a text of that name is in this archive:"
+                                 f"\n    THIRD-PARTY-LICENSES/{orel} (owner {oown})")
+        lines_out.append(f"{rel}\n    owner {r['owner']}{note}\n    from {r['detail']}\n    sha256 {r['sha256']}")
+    index = lines_out
     status = "complete" if not reasons else "incomplete"
     head = [f"Licence texts of everything linked into {PLATFORMS[platform][1]} ({platform}), from the link inventory",
             "of its build (link-inventory.sh). Status: " + status + "."]
@@ -215,6 +243,31 @@ def licences(platform, art, manifest, checkout, stage):
     with open(os.path.join(tdir, "INDEX.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(head) + "\n\n" + "\n\n".join(index) + "\n")
     return status, entries, reasons
+
+
+def source_tarballs(platform, art, checkout, entries):
+    """[(package, file, path in the artifact, sha256)] of the source tarballs this platform must carry; exit 1 if missing."""
+    logs = os.path.join(art, "build-logs")
+    rows = read_inventory(os.path.join(logs, "link-inventory.tsv")) if os.path.isfile(os.path.join(logs, "link-inventory.tsv")) else []
+    owners = {r["owner"] for r in rows if (r["kind"] == "input" and r["detail"].startswith("used")) or r["kind"] == "compiled"}
+    out = []
+    for pkg in sorted(SOURCE_WITH_RELEASE):
+        if f"depends:{pkg}" not in owners:
+            continue
+        cand = [r for r in rows if r["kind"] == "source-tarball" and r["owner"] == f"depends:{pkg}"]
+        if len(cand) != 1:
+            fail(f"{platform}: depends:{pkg} is linked but the build carries {len(cand)} source tarballs of it")
+        r = cand[0]
+        p = os.path.normpath(os.path.join(logs, r["path"]))
+        if not p.startswith(os.path.join(logs, "depends-sources") + os.sep) or not os.path.isfile(p) or os.path.islink(p):
+            fail(f"{platform}: source tarball {r['path']} of depends:{pkg} missing from the build artifact")
+        h = sha256(p)
+        pin = pinned_hash(checkout, pkg)
+        stamped = {e["source"].get("source_sha256") for e in entries if e["owner"] == f"depends:{pkg}" and e["kind"] == "depends"}
+        if h != r["sha256"] or pin is None or h != pin or stamped != {h}:
+            fail(f"{platform}: source tarball {r['path']} has {h}; inventory {r['sha256']}, pin {pin}, licence texts from {sorted(stamped)}")
+        out.append((pkg, os.path.basename(p), p, h))
+    return out
 
 
 def readme(tm):
@@ -262,6 +315,11 @@ def readme(tm):
     lines += ["", "LICENCES",
               "  LICENSE is the source tree's licence; THIRD-PARTY-LICENSES/ holds the texts of everything linked",
               f"  into {b['name']}, listed in THIRD-PARTY-LICENSES/INDEX.txt. Status: {lic['status']}."]
+    for st in tm["source_tarballs"]:
+        lines += [f"  {st['file']}, published next to this archive and listed in SHA256SUMS, is the source code of",
+                  f"  {st['name']} exactly as the build fetched and hash-checked it (SHA256 {st['sha256']}); it is",
+                  f"  published with the binary because {st['name']} is linked into {b['name']} under the licence in",
+                  f"  {st['licence_text']}."]
     if lic["status"] != "complete":
         lines += ["  NOT ESTABLISHED: this archive must not be released until these are resolved:"] + \
                  [f"    - {r}" for r in lic["reasons"]]
@@ -382,6 +440,21 @@ def main():
             os.chmod(os.path.join(stage, binary), 0o755)
             shutil.copyfile(os.path.join(checkout, "LICENSE"), os.path.join(stage, "LICENSE"))
             status, entries, reasons = licences(plat, art, m, checkout, stage)
+            tarballs = []
+            for pkg, fname, path, h in source_tarballs(plat, art, checkout, entries):
+                dst = os.path.join(a.out, fname)
+                if fname in sums:
+                    if sums[fname] != h:
+                        fail(f"{plat}: source tarball {fname} differs from the one of another platform")
+                else:
+                    shutil.copyfile(path, dst)
+                    if sha256(dst) != h:
+                        fail(f"{plat}: copy of {fname} changed")
+                    sums[fname] = h
+                texts = sorted(e["text"] for e in entries if e["owner"] == f"depends:{pkg}")
+                tarballs.append({"package": pkg, "name": SOURCE_WITH_RELEASE[pkg], "owner": f"depends:{pkg}", "file": fname,
+                                 "sha256": h, "size": os.path.getsize(dst), "pinned_sha256": pinned_hash(checkout, pkg),
+                                 "licence_text": texts[0] if texts else None})
             archive = f"{top}.{fmt}"
             mname = f"{top}.manifest.json"
             tm = {
@@ -394,6 +467,7 @@ def main():
                 "workflow": m["workflow"], "run_url": a.run_url,
                 "tested": TESTED[plat], "not_tested": NOT_TESTED[plat],
                 "third_party_licenses": {"status": status, "reasons": reasons, "entries": entries},
+                "source_tarballs": tarballs,
                 "manifest_name": mname, "source_date_epoch": epoch,
             }
             with open(os.path.join(stage, "README.txt"), "w", encoding="utf-8") as f:
