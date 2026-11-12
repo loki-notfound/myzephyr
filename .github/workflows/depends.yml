@@ -2,9 +2,10 @@ name: ci/gh-actions/depends
 
 on:
   push:
-    # myzephyr: the dedicated workflow covers ci/daemon-release-baseline and my/**; with only a branch
+    # myzephyr: the dedicated workflow covers ci/daemon-release-baseline, my/** and the pull-request
+    # branches pr/** (through their pull requests into my/**); with only a branch
     # filter set, tag pushes do not start this workflow (unchanged).
-    branches-ignore: [ci/daemon-release-baseline, "my/**"]
+    branches-ignore: [ci/daemon-release-baseline, "my/**", "pr/**"]
     paths-ignore:
       - 'docs/**'
       - '**/README.md'

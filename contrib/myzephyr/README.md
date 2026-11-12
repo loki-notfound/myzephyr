@@ -224,7 +224,8 @@ above the glibc 2.29 that upstream's v2.3.0 Linux daemon needs.
 
 The inherited build, depends, tests and provenance workflows (upstream's matrices and the
 zephyr-backports policy of Monero cherry-picks only) exclude pushes to
-`ci/daemon-release-baseline` and to `my/**` and pull requests into `my/**`; with only a
+`ci/daemon-release-baseline`, to `my/**` and to the pull-request branches `pr/**`, and pull
+requests into `my/**`; with only a
 branch filter on push they never start on a tag push, also not on a `v*-sec.*-my.*` tag.
 The dedicated workflow runs the build and test gates there. Other branches and pull
 requests keep their existing triggers. The inherited `gitian.yml` starts on every tag push
