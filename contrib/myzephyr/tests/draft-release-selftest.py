@@ -11,7 +11,7 @@ signed by the throwaway base key (refs/tags/v-selftest-base), one own commit sig
 throwaway maintainer key ("Origin: myzephyr"), branch my/v2.3.0, the release tag
 v2.3.0-sec.2-my.1 signed by the maintainer key. The stub gh answers the run, branch,
 artifact and release queries from files and records every call.
-Cases: --dry-run creates nothing and prints the command with the nine files; a real call
+Cases: --dry-run creates nothing and prints the command with the files of the set; a real call
 runs gh release create --draft --verify-tag with exactly those files and notes naming the
 base, the own commit ("not yet reported"), the platforms, the verification and the run.
 Refused, one change each: a release exists; run event pull_request; run on another branch;
@@ -19,12 +19,14 @@ run not successful; run built another commit; tag commit not on the branch; tag 
 another key; lightweight tag; GitHub digest differs; a file of the set changed (SHA256SUMS);
 manifest of another run; incomplete licences; archive binary differs from the manifest;
 artifact expired. Usage: tag name outside v*-sec.*-my.*, run id not a number, no arguments.
-Round 16 (owner decision: GNU readline ships with its source): the base commit carries a
-synthetic contrib/depends/packages/readline.mk pin; the Linux and macOS artifacts link a
-synthetic depends:readline and carry its synthetic source tarball, so the set has ten files.
-Cases: present (ten files, the tarball among those given to gh), Windows without readline
-needs none; refused: the tarball missing from the set, its hash not the pin (set re-hashed
-consistently), a manifest naming readline without naming the tarball.
+Rounds 16 and 17 (owner decisions: GNU readline, libusb and ZeroMQ ship with their source):
+the base commit carries synthetic contrib/depends/packages/<package>.mk pins; the artifacts
+link synthetic depends packages as the real builds do (readline on Linux and macOS, libusb on
+Linux, zeromq on all four) and carry their synthetic source tarballs, so the set has twelve
+files. Cases: present (twelve files, the three tarballs among those given to gh), a platform
+that does not link a package needs no tarball of it; refused, per package: the tarball
+missing from the set, its hash not the pin (set re-hashed consistently), a manifest naming
+the package without naming the tarball.
 """
 import hashlib
 import json
@@ -92,11 +94,16 @@ try:
         open(os.path.join(keys, f), "w").write(run("gpg", "--batch", "--homedir", gh_home, "--armor", "--export", fpr).stdout)
     os.makedirs(os.path.join(R, ".github", "workflows"))
     open(os.path.join(R, "LICENSE"), "w").write("synthetic tree licence\n")
-    RL_BYTES = b"synthetic readline source tarball, not the real one\n"
-    RL_PIN = hashlib.sha256(RL_BYTES).hexdigest()
+    # packages whose source goes with the release: file, licence file, platforms linking it (as in the real builds)
+    SRC = {"readline": ("readline-8.0.tar.gz", "COPYING", ("linux-x86_64", "linux-aarch64", "macos-x86_64"), "GNU readline"),
+           "libusb": ("libusb-1.0.27.tar.bz2", "COPYING", ("linux-x86_64", "linux-aarch64"), "libusb"),
+           "zeromq": ("zeromq-4.3.5.tar.gz", "LICENSE", ("linux-x86_64", "linux-aarch64", "macos-x86_64", "windows-x86_64"), "ZeroMQ (libzmq)")}
+    TB = {pkg: f"synthetic {pkg} source tarball, not the real one\n".encode() for pkg in SRC}
+    PIN = {pkg: hashlib.sha256(b).hexdigest() for pkg, b in TB.items()}
     os.makedirs(os.path.join(R, "contrib", "depends", "packages"))
-    open(os.path.join(R, "contrib", "depends", "packages", "readline.mk"), "w").write(
-        f"package=readline\n$(package)_version=8.0\n$(package)_sha256_hash={RL_PIN}\n")
+    for pkg in SRC:
+        open(os.path.join(R, "contrib", "depends", "packages", f"{pkg}.mk"), "w").write(
+            f"package={pkg}\n$(package)_version=1\n$(package)_sha256_hash={PIN[pkg]}\n")
 
     def G(*a, check=True):
         return run("git", "-C", R, "-c", "core.hooksPath=/dev/null", "-c", "gpg.program=gpg", "-c", "user.name=selftest",
@@ -149,17 +156,20 @@ try:
             inv = ("kind\tpath\towner\tsha256\tdetail\nstatus\trelink_identical\t-\t-\tyes\n"
                    f"input\t/src/build/release/src/daemon/CMakeFiles/daemon.dir/main.cpp.o\ttree:src/daemon\t{'0' * 64}\tused\n"
                    f"license\tlicenses/tree/LICENSE\ttree:src/daemon\t{sha(os.path.join(d, 'build-logs', 'licenses', 'tree', 'LICENSE'))}\ttree path=LICENSE\n")
-            if plat != "windows-x86_64":
+            for pkg, (fname, lname, plats, _) in SRC.items():
+                if plat not in plats:
+                    continue
                 lg = os.path.join(d, "build-logs")
-                os.makedirs(os.path.join(lg, "licenses", "depends", "readline"))
-                os.makedirs(os.path.join(lg, "depends-sources"))
-                open(os.path.join(lg, "licenses", "depends", "readline", "COPYING"), "w").write("synthetic readline licence\n")
-                open(os.path.join(lg, "depends-sources", "readline-8.0.tar.gz"), "wb").write(RL_BYTES)
-                inv += (f"input\t/src/contrib/depends/{target}/lib/libreadline.a\tdepends:readline\t{'1' * 64}\tused members=1\n"
-                        f"license\tlicenses/depends/readline/COPYING\tdepends:readline\t{sha(os.path.join(lg, 'licenses', 'depends', 'readline', 'COPYING'))}"
-                        f"\tdepends source=readline-8.0.tar.gz source_sha256={RL_PIN} member=readline-8.0/COPYING\n"
-                        f"source-tarball\tdepends-sources/readline-8.0.tar.gz\tdepends:readline\t{RL_PIN}"
-                        f"\tdepends source=readline-8.0.tar.gz source_sha256={RL_PIN} stamp=x\n")
+                os.makedirs(os.path.join(lg, "licenses", "depends", pkg))
+                os.makedirs(os.path.join(lg, "depends-sources"), exist_ok=True)
+                open(os.path.join(lg, "licenses", "depends", pkg, lname), "w").write(f"synthetic {pkg} licence\n")
+                open(os.path.join(lg, "depends-sources", fname), "wb").write(TB[pkg])
+                top = fname.split(".tar.")[0]
+                inv += (f"input\t/src/contrib/depends/{target}/lib/lib{pkg}.a\tdepends:{pkg}\t{'1' * 64}\tused members=1\n"
+                        f"license\tlicenses/depends/{pkg}/{lname}\tdepends:{pkg}\t{sha(os.path.join(lg, 'licenses', 'depends', pkg, lname))}"
+                        f"\tdepends source={fname} source_sha256={PIN[pkg]} member={top}/{lname}\n"
+                        f"source-tarball\tdepends-sources/{fname}\tdepends:{pkg}\t{PIN[pkg]}"
+                        f"\tdepends source={fname} source_sha256={PIN[pkg]} stamp=x\n")
             open(os.path.join(d, "build-logs", "link-inventory.tsv"), "w").write(inv)
             m = {"artifact": {"name": binary, "target": target, "expected_version": version,
                               "sha256": sha(os.path.join(d, binary)), "size": os.path.getsize(os.path.join(d, binary))},
@@ -257,23 +267,27 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
     # positive
     p, out, creates, log = scenario("dry run prints the command, creates nothing", args=["--dry-run", TAG, RUN], frag="dry run, nothing created")
     files = [l.strip() for l in out.splitlines() if l.startswith("  ")]
-    record("dry run lists ten flat files (4 archives, 4 manifests, the readline source tarball, SHA256SUMS last)",
-           len(files) == 10 and files[-1] == "SHA256SUMS" and "readline-8.0.tar.gz" in files
+    record("dry run lists twelve flat files (4 archives, 4 manifests, the three source tarballs, SHA256SUMS last)",
+           len(files) == 12 and files[-1] == "SHA256SUMS" and all(v[0] in files for v in SRC.values())
            and sum(f.endswith(".manifest.json") for f in files) == 4 and not creates, files)
-    wman = json.load(open(os.path.join(good_set, next(n for n in os.listdir(good_set) if n.endswith("windows-x86_64.manifest.json")))))
-    record("Windows links no readline: its manifest names no source tarball and the set is accepted",
-           wman["source_tarballs"] == [] and "dry run, nothing created" in out)
+    for plat in PLAT:
+        pman = json.load(open(os.path.join(good_set, next(n for n in os.listdir(good_set) if n.endswith(f"{plat}.manifest.json")))))
+        linked = sorted(pkg for pkg, v in SRC.items() if plat in v[2])
+        record(f"{plat}: its manifest names the source tarballs of exactly {', '.join(linked)} (no tarball for a package it does not link); accepted",
+               sorted(t["package"] for t in pman["source_tarballs"]) == linked and "dry run, nothing created" in out)
     record("dry run prints gh release create --draft --verify-tag", "gh release create" in out and "--draft --verify-tag" in out)
     p, out, creates, log = scenario("real call creates the draft", frag="draft created")
     c = creates[0] if creates else []
-    record("gh release create with --draft --verify-tag and exactly the ten files, the readline tarball among them", len(creates) == 1
+    record("gh release create with --draft --verify-tag and exactly the twelve files, the three tarballs among them", len(creates) == 1
            and "--draft" in c and "--verify-tag" in c and "--title" in c
-           and sum(1 for x in c if os.path.isfile(x) and not x.endswith("notes.md")) == 10 and any(x.endswith("/readline-8.0.tar.gz") for x in c), c)
+           and sum(1 for x in c if os.path.isfile(x) and not x.endswith("notes.md")) == 12
+           and all(any(x.endswith("/" + v[0]) for x in c) for v in SRC.values()), c)
     notes = open(log + ".notes").read() if os.path.exists(log + ".notes") else ""
     record("notes: base, own commit not yet reported, platforms, verification, run, owner statement placeholder",
            all(x in notes for x in ("v-selftest-base", "Add the own change (upstream report: not yet reported)", "windows-x86_64",
                                     "gpg --verify SHA256SUMS.asc` (the clear-signed", RUN_URL, "TO BE STATED BY THE OWNER",
-                                    "`readline-8.0.tar.gz` is the source of GNU readline")), notes[:400])
+                                    "`readline-8.0.tar.gz` is the source of GNU readline", "`libusb-1.0.27.tar.bz2` is the source of libusb",
+                                    "`zeromq-4.3.5.tar.gz` is the source of ZeroMQ (libzmq)")), notes[:400])
     record("never publishes and never signs", not any("--draft=false" in x or x == "edit" for cc in creates for x in cc))
 
     # refusals
@@ -333,32 +347,34 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
         lines += [f"{sha(os.path.join(setdir, n))}  {n}" for n in changed if os.path.exists(os.path.join(setdir, n))]
         open(os.path.join(setdir, "SHA256SUMS"), "w").write("\n".join(sorted(lines, key=lambda l: l.split('  ')[1])) + "\n")
 
-    no_rl = os.path.join(work, "no-readline-tarball-set")
-    shutil.copytree(good_set, no_rl)
-    os.remove(os.path.join(no_rl, "readline-8.0.tar.gz"))
-    resum(no_rl, ["readline-8.0.tar.gz"])
-    scenario("readline source tarball missing from the set", set_dir=no_rl, want_exit=1, frag="missing from the set")
-    bad_rl = os.path.join(work, "readline-not-pin-set")
-    shutil.copytree(good_set, bad_rl)
-    open(os.path.join(bad_rl, "readline-8.0.tar.gz"), "wb").write(b"other bytes\n")
-    hb = sha(os.path.join(bad_rl, "readline-8.0.tar.gz"))
-    mfiles = [n for n in os.listdir(bad_rl) if n.endswith(".manifest.json")]
-    for n in mfiles:
-        mm = json.load(open(os.path.join(bad_rl, n)))
-        for t in mm["source_tarballs"]:
-            t["sha256"] = hb
-            t["size"] = os.path.getsize(os.path.join(bad_rl, "readline-8.0.tar.gz"))
-        json.dump(mm, open(os.path.join(bad_rl, n), "w"), indent=2, sort_keys=True)
-    resum(bad_rl, ["readline-8.0.tar.gz"] + mfiles)
-    scenario("readline source tarball hash is not the pin", set_dir=bad_rl, want_exit=1, frag=f"the pin in the checkout is {RL_PIN}")
-    unnamed = os.path.join(work, "readline-unnamed-set")
-    shutil.copytree(good_set, unnamed)
-    mf = next(n for n in os.listdir(unnamed) if n.endswith("macos-x86_64.manifest.json"))
-    mm = json.load(open(os.path.join(unnamed, mf)))
-    mm["source_tarballs"] = []
-    json.dump(mm, open(os.path.join(unnamed, mf), "w"), indent=2, sort_keys=True)
-    resum(unnamed, [mf])
-    scenario("manifest names readline but no source tarball", set_dir=unnamed, want_exit=1, frag="names no source tarball of it")
+    for pkg, (fname, _, plats, _) in SRC.items():
+        missing = os.path.join(work, f"no-{pkg}-tarball-set")
+        shutil.copytree(good_set, missing)
+        os.remove(os.path.join(missing, fname))
+        resum(missing, [fname])
+        scenario(f"{pkg} source tarball missing from the set", set_dir=missing, want_exit=1, frag=f"source tarball {fname} missing from the set")
+        bad = os.path.join(work, f"{pkg}-not-pin-set")
+        shutil.copytree(good_set, bad)
+        open(os.path.join(bad, fname), "wb").write(b"other bytes\n")
+        hb = sha(os.path.join(bad, fname))
+        mfiles = [n for n in os.listdir(bad) if n.endswith(".manifest.json")]
+        for n in mfiles:
+            mm = json.load(open(os.path.join(bad, n)))
+            for t in mm["source_tarballs"]:
+                if t["package"] == pkg:
+                    t["sha256"] = hb
+                    t["size"] = os.path.getsize(os.path.join(bad, fname))
+            json.dump(mm, open(os.path.join(bad, n), "w"), indent=2, sort_keys=True)
+        resum(bad, [fname] + mfiles)
+        scenario(f"{pkg} source tarball hash is not the pin", set_dir=bad, want_exit=1, frag=f"the pin in the checkout is {PIN[pkg]}")
+        unnamed = os.path.join(work, f"{pkg}-unnamed-set")
+        shutil.copytree(good_set, unnamed)
+        mf = next(n for n in os.listdir(unnamed) if n.endswith(f"{plats[-1]}.manifest.json"))
+        mm = json.load(open(os.path.join(unnamed, mf)))
+        mm["source_tarballs"] = [t for t in mm["source_tarballs"] if t["package"] != pkg]
+        json.dump(mm, open(os.path.join(unnamed, mf), "w"), indent=2, sort_keys=True)
+        resum(unnamed, [mf])
+        scenario(f"manifest names {pkg} but no source tarball", set_dir=unnamed, want_exit=1, frag=f"names depends:{pkg} but the manifest names no source tarball of it")
 
     # usage
     scenario("tag name outside v*-sec.*-my.*", args=["v2.3.0-sec.2", RUN], want_exit=2, frag="does not match")

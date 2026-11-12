@@ -29,12 +29,16 @@ manifest names, the traced re-link was identical, nothing is unresolved, every u
 (of a used input other than a build-tree product "build:<dir>", of a linked object's source
 ("compiled" rows) and of compiled-in headers) has a licence text, and every depends source hash
 equals the pin in the checkout's contrib/depends/packages/*.mk; otherwise "incomplete" with
-the reasons, in the manifest and README. draft-release.sh refuses an incomplete set; this
-script still writes it, so every run shows the list for review. INDEX.txt notes, for a text
+the reasons, in the manifest and README. A compiled-in file without a licence statement
+("statement ... none" row of the inventory) is shipped as upstream ships it (owner decision
+2026-11-12): it does not block, and a source directory whose every compiled-in file is such a
+file does not count as an owner without a text; neither is mentioned in the archive, the
+README or the manifest (the build's link-inventory.tsv keeps the fact). draft-release.sh
+refuses an incomplete set; this script still writes it, so every run shows the list for review. INDEX.txt notes, for a text
 from a source header that names a licence file (e.g. "accompanying file LICENSE_1_0.txt"),
 where a text of that file name is in the same archive.
-Source tarballs (SOURCE_WITH_RELEASE, owner decision: GNU readline): for every platform whose
-inventory has such a package as a used owner, the build artifact must carry the tarball its
+Source tarballs (SOURCE_WITH_RELEASE, owner decisions: GNU readline, libusb, ZeroMQ): for every
+platform whose inventory has such a package as a used owner, the build artifact must carry the tarball its
 link inventory copied from the build's own depends source cache ("source-tarball" row,
 build-logs/depends-sources/<file>); its hash must equal the row, the stamped source hash of
 the package's licence texts and the pin in the checkout's recipe. It is added to the set as a
@@ -63,8 +67,9 @@ import tempfile
 import zipfile
 
 SCHEMA = "myzephyr/daemon-release-target/2"
-# depends packages whose source tarball goes with the release set (owner decision 2026-11-11)
-SOURCE_WITH_RELEASE = {"readline": "GNU readline"}
+# depends packages whose source tarball goes with the release set (owner decisions 2026-11-11 and
+# 2026-11-12), with the name README.txt uses
+SOURCE_WITH_RELEASE = {"readline": "GNU readline", "libusb": "libusb", "zeromq": "ZeroMQ (libzmq)"}
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
 _spec = importlib.util.spec_from_file_location("verify_artifact", os.path.join(os.path.dirname(HERE), "verify-artifact.py"))
@@ -193,8 +198,14 @@ def licences(platform, art, manifest, checkout, stage):
     used = sorted({r["owner"] for r in rows if (r["kind"] == "input" and r["detail"].startswith("used") and not r["owner"].startswith("build:"))
                    or r["kind"] == "header" or (r["kind"] == "compiled" and r["owner"] != "unknown")})
     covered = {r["owner"] for r in rows if r["kind"] in ("license", "license-ref")}
+    # a source directory whose every compiled-in file states nothing: shipped as upstream ships it
+    stated = {}
+    for r in rows:
+        if r["kind"] == "statement" and r["owner"].startswith("tree:"):
+            stated.setdefault(r["owner"], set()).add(r["detail"] != "none")
+    nothing_stated = {o for o, v in stated.items() if v == {False}}
     for o in used:
-        if o not in covered:
+        if o not in covered and o not in nothing_stated:
             reasons.append(f"no licence text for {o}")
     index = []
     for r in rows:

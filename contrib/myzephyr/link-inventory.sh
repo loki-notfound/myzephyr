@@ -52,13 +52,17 @@
 #                recorded per file ("statement" row) and once per distinct text ("license"
 #                row "tree-header from=source-header file=<path> lines=<first>-<last>
 #                file_sha256=<hash of the source file>"). A compiled-in file without such a
-#                block is a "statement ... none" row and unresolved. Nothing is paraphrased or
-#                supplied.
-#    No text found is an "unresolved" line, never a silent omission.
-# 5. Source tarballs that go with the release set (owner decision; now GNU readline): when such
-#    a depends package is a used owner, its source tarball is copied from the build's own depends
-#    source cache, after the stamped hash check, to <logs-dir>/depends-sources/ ("source-tarball"
-#    row with the hash).
+#                block is a "statement ... none" row, for information only: it does not make
+#                the inventory unresolved and gets no text (owner decision 2026-11-12: such
+#                files are shipped as upstream ships them; make-release-set.py does not count
+#                an owner whose every statement row is "none" as lacking a text). Nothing is
+#                paraphrased or supplied. No compiled-in file of the directory found at all is
+#                unresolved.
+#    Any other missing text is an "unresolved" line, never a silent omission.
+# 5. Source tarballs that go with the release set (owner decisions 2026-11-11 and 2026-11-12:
+#    readline, libusb, zeromq): when such a depends package is a used owner, its source tarball
+#    is copied from the build's own depends source cache, after the stamped hash check, to
+#    <logs-dir>/depends-sources/ ("source-tarball" row with the hash).
 # Writes <logs-dir>/link-inventory.tsv (kind, path, owner, sha256, detail), the raw trace
 # <logs-dir>/link-trace.txt, <logs-dir>/daemon-link.txt, the trace items and their sources
 # (link-items.txt, link-sources.items.tsv, link-sources.deps.tsv). Paths are as seen in the
@@ -254,7 +258,7 @@ head_blocks() {  # head_blocks <file>: "<first> <last>" of each comment block in
     END { if (!done) flush() }' "$1"
 }
 header_licence() {  # header_licence <owner> <relative dir>: licence statements from the head of every compiled-in file of <dir>
-  local o=$1 d=$2 rel f a b out h nfile=0 nstat=0
+  local o=$1 d=$2 rel f a b out h nfile=0
   local -A seen=()
   while IFS= read -r rel; do
     [ -n "$rel" ] || continue
@@ -271,14 +275,10 @@ header_licence() {  # header_licence <owner> <relative dir>: licence statements 
       seen[$h]=1
       row license "${out#"$logs/"}" "$o" "$h" "tree-header from=source-header file=$rel lines=$a-$b file_sha256=$(sha "$f")"
     done < <(head_blocks "$f")
-    if [ "$found" = 1 ]; then nstat=$((nstat + 1))
-    else
-      row statement "$rel" "$o" "$(sha "$f")" none
-      unresolved "$o" "no licence statement in the head of the compiled-in file $rel"
-    fi
+    # no statement: an informational row only (shipped as upstream ships it; owner decision)
+    [ "$found" = 1 ] || row statement "$rel" "$o" "$(sha "$f")" none
   done < <(printf '%s' "${compiled_in[$d]:-}" | sort -u)
   [ "$nfile" -gt 0 ] || unresolved "$o" "no licence file in $d or above it within its boundary, and no compiled-in file of $d whose head could be read"
-  [ "$nstat" -gt 0 ]
 }
 
 # files from external/ compiled into the linked objects (their make dependency records: headers,
@@ -307,7 +307,7 @@ done < "$logs/link-sources.items.tsv"
 
 # depends packages whose source tarball goes with the release set (owner decision): copied from
 # the build's own hash-checked depends source cache, never downloaded again
-SOURCE_WITH_RELEASE=" readline "
+SOURCE_WITH_RELEASE=" readline libusb zeromq "
 declare -A done_licence
 for o in $(printf '%s\n' "${!used_owner[@]}" | sort); do
   case "$o" in
@@ -345,8 +345,7 @@ for o in $(printf '%s\n' "${!used_owner[@]}" | sort); do
       row license "licenses/deb/$pkg/copyright" "$o" "$(sha "$lic/deb/$pkg/copyright")" "deb package=$pkg version=$ver file=$f" ;;
     tree:*)
       d=${o#tree:}
-      ld=$(tree_licence_dir "$d") || { header_licence "$o" "$d" \
-        || unresolved "$o" "no licence file in $d or above it within its boundary, and no licence statement in the head of a compiled-in file of $d"; continue; }
+      ld=$(tree_licence_dir "$d") || { header_licence "$o" "$d"; continue; }
       [ -z "${done_licence[$ld]:-}" ] || { row license-ref "$ld" "$o" - "same texts as $ld"; continue; }
       done_licence[$ld]=1
       while IFS= read -r f; do

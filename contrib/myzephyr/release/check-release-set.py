@@ -21,11 +21,11 @@ artifact. Checks, each fatal (exit 1):
             LICENSE, README.txt and THIRD-PARTY-LICENSES/INDEX.txt, and no link or path
             outside it;
   sources   a manifest whose licence list names a package of SOURCE_WITH_RELEASE (owner
-            decision: GNU readline, depends:readline) must name its source tarball in
-            "source_tarballs"; that file must be in D and in SHA256SUMS with the manifest's
-            hash, and the hash must equal the pin in --checkout (the verified checkout of the
+            decisions: depends:readline, depends:libusb, depends:zeromq) must name its
+            source tarball in "source_tarballs"; that file must be in D and in SHA256SUMS with
+            the manifest's hash, and the hash must equal the pin in --checkout (the verified checkout of the
             tagged commit) contrib/depends/packages/<package>.mk. A manifest that does not
-            name such a package needs no tarball (Windows); a tarball no manifest names is
+            name such a package needs no tarball of it; a tarball no manifest names is
             refused.
 Prints the flat file list (one name per line, SHA256SUMS last) and writes Markdown notes to
 --notes: what the release is, base, own commits with the upstream report each was sent as
@@ -51,7 +51,7 @@ _spec.loader.exec_module(va)
 PLATFORMS = {"linux-x86_64": ("zephyrd", "tar.gz"), "linux-aarch64": ("zephyrd", "tar.gz"),
              "macos-x86_64": ("zephyrd", "tar.gz"), "windows-x86_64": ("zephyrd.exe", "zip")}
 SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-SOURCE_WITH_RELEASE = ("readline",)
+SOURCE_WITH_RELEASE = ("readline", "libusb", "zeromq")
 
 
 def pinned_hash(checkout, pkg):

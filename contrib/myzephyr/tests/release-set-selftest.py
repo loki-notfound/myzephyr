@@ -17,11 +17,18 @@ text not matching its inventory hash (each: refused, exit 1). A licence text tak
 source header (kind tree-header) is accepted, "complete", and marked in INDEX.txt.
 Round 16: inputs made in the build tree ("build:<dir>") need no text, the owners of linked
 objects' sources ("compiled" rows) do; a source-header statement naming LICENSE_1_0.txt gets
-an INDEX.txt note pointing at the text of that name. Source tarballs (owner decision: GNU
-readline): the Linux and macOS artifacts link a synthetic depends:readline and carry its
-synthetic source tarball; the set holds it once as a flat file, in SHA256SUMS, in those three
-manifests and README.txt files, not in Windows'; a linked readline without the tarball, a
-tarball whose hash is not the pin, and tarballs that differ between platforms are refused.
+an INDEX.txt note pointing at the text of that name. Source tarballs (owner decisions: GNU
+readline, libusb, ZeroMQ): the artifacts link synthetic depends packages as the real builds do
+(readline on Linux and macOS, libusb on Linux, zeromq on all four) and carry their synthetic
+source tarballs; the set holds each once as a flat file, in SHA256SUMS, in the manifests and
+README.txt files of the platforms that link it, not in the others'. Per package: present;
+linked without the tarball, a tarball whose hash is not the pin, no source-tarball row (each
+refused); linked nowhere (no tarball in the set, accepted).
+Round 17 (owner decision: a compiled-in file without a licence statement is shipped as upstream
+ships it): "statement ... none" rows, for a directory where no file states anything and for one
+where another file does, leave the set "complete" and are not named in INDEX.txt, README.txt or
+the manifest; a directory with a statement row but no text, and the blockers above, still make
+it "incomplete".
 """
 import copy
 import gzip
@@ -66,11 +73,16 @@ open(os.path.join(co, "LICENSE"), "w").write("tree licence (synthetic)\n")
 src_tarball = b"synthetic dep source"
 open(os.path.join(co, "contrib", "depends", "packages", "dep.mk"), "w").write(
     f"$(package)_version=1.0\n$(package)_sha256_hash={hashlib.sha256(src_tarball).hexdigest()}\n")
-rl_tarball = b"synthetic readline source tarball, not the real one\n"
-RL_PIN = hashlib.sha256(rl_tarball).hexdigest()
-open(os.path.join(co, "contrib", "depends", "packages", "readline.mk"), "w").write(
-    f"package=readline\n$(package)_version=8.0\n$(package)_sha256_hash={RL_PIN}\n")
-RL = ("linux-x86_64", "linux-aarch64", "macos-x86_64")
+# packages whose source goes with the release: file, licence file, platforms linking it (as in the real builds)
+SRC = {"readline": ("readline-8.0.tar.gz", "COPYING", ("linux-x86_64", "linux-aarch64", "macos-x86_64"), "GNU readline"),
+       "libusb": ("libusb-1.0.27.tar.bz2", "COPYING", ("linux-x86_64", "linux-aarch64"), "libusb"),
+       "zeromq": ("zeromq-4.3.5.tar.gz", "LICENSE", ("linux-x86_64", "linux-aarch64", "macos-x86_64", "windows-x86_64"), "ZeroMQ (libzmq)")}
+TB = {pkg: f"synthetic {pkg} source tarball, not the real one\n".encode() for pkg in SRC}
+PIN = {pkg: hashlib.sha256(b).hexdigest() for pkg, b in TB.items()}
+RL_PIN = PIN["readline"]
+for pkg in SRC:
+    open(os.path.join(co, "contrib", "depends", "packages", f"{pkg}.mk"), "w").write(
+        f"package={pkg}\n$(package)_version=1\n$(package)_sha256_hash={PIN[pkg]}\n")
 sh("git", "init", "-q", co)
 sh("git", "-C", co, *genv, "add", "-A"); sh("git", "-C", co, *genv, "commit", "-q", "-m", "base")
 own = []
@@ -106,16 +118,19 @@ def make_artifact(d, plat):
             ("input", "/src/build/release/src/crypto/wallet/libwallet-crypto.a", "build:src/crypto/wallet", "6" * 64, "used members=1"),
             ("compiled", "/src/build/release/src/crypto/wallet/libwallet-crypto.a(x.c.o)", "tree:external/ext", "7" * 64,
              "source=external/ext/x.c object=build/release/x/CMakeFiles/x.dir/x.c.o")]
-    if plat in RL:
-        os.makedirs(os.path.join(logs, "licenses", "depends", "readline"))
-        os.makedirs(os.path.join(logs, "depends-sources"))
-        open(os.path.join(logs, "licenses", "depends", "readline", "COPYING"), "w").write("readline licence (synthetic)\n")
-        open(os.path.join(logs, "depends-sources", "readline-8.0.tar.gz"), "wb").write(rl_tarball)
-        rows += [("input", f"/src/contrib/depends/{target}/lib/libreadline.a", "depends:readline", "8" * 64, "used members=2"),
-                 ("license", "licenses/depends/readline/COPYING", "depends:readline", sha(os.path.join(logs, "licenses", "depends", "readline", "COPYING")),
-                  f"depends source=readline-8.0.tar.gz source_sha256={RL_PIN} member=readline-8.0/COPYING"),
-                 ("source-tarball", "depends-sources/readline-8.0.tar.gz", "depends:readline", RL_PIN,
-                  f"depends source=readline-8.0.tar.gz source_sha256={RL_PIN} stamp=.stamp_fetched-readline-readline-8.0.tar.gz.hash")]
+    for pkg, (fname, lname, plats, _) in SRC.items():
+        if plat not in plats:
+            continue
+        os.makedirs(os.path.join(logs, "licenses", "depends", pkg))
+        os.makedirs(os.path.join(logs, "depends-sources"), exist_ok=True)
+        open(os.path.join(logs, "licenses", "depends", pkg, lname), "w").write(f"{pkg} licence (synthetic)\n")
+        open(os.path.join(logs, "depends-sources", fname), "wb").write(TB[pkg])
+        top = fname.split(".tar.")[0]
+        rows += [("input", f"/src/contrib/depends/{target}/lib/lib{pkg}.a", f"depends:{pkg}", "8" * 64, "used members=2"),
+                 ("license", f"licenses/depends/{pkg}/{lname}", f"depends:{pkg}", sha(os.path.join(logs, "licenses", "depends", pkg, lname)),
+                  f"depends source={fname} source_sha256={PIN[pkg]} member={top}/{lname}"),
+                 ("source-tarball", f"depends-sources/{fname}", f"depends:{pkg}", PIN[pkg],
+                  f"depends source={fname} source_sha256={PIN[pkg]} stamp=.stamp_fetched-{pkg}-{fname}.hash")]
     write_inventory(d, rows)
     m = {"schema": "synthetic", "artifact": {"name": binary, "target": target, "expected_version": version,
                                               "sha256": sha(os.path.join(d, binary)), "size": os.path.getsize(os.path.join(d, binary))},
@@ -164,12 +179,13 @@ p, out = run("valid", d)
 record("valid set written", p.returncode == 0, p.stderr[-400:])
 names = sorted(os.listdir(out)) if os.path.isdir(out) else []
 want = sorted([f"zephyrd-{vs}-{pl}.{'zip' if pl.startswith('windows') else 'tar.gz'}" for pl in PLAT] +
-              [f"zephyrd-{vs}-{pl}.manifest.json" for pl in PLAT] + ["SHA256SUMS", "readline-8.0.tar.gz"])
-record("exactly four archives, four manifests, the readline source tarball and SHA256SUMS", names == want, names)
+              [f"zephyrd-{vs}-{pl}.manifest.json" for pl in PLAT] + ["SHA256SUMS"] + [v[0] for v in SRC.values()])
+record("exactly four archives, four manifests, the three source tarballs and SHA256SUMS", names == want, names)
 if names == want:
     sums = [l.split("  ") for l in open(os.path.join(out, "SHA256SUMS")).read().splitlines()]
-    record("readline source tarball: the same bytes as the build carried (= the pin)", sha(os.path.join(out, "readline-8.0.tar.gz")) == RL_PIN)
-    record("SHA256SUMS lists the nine files, not itself, hashes match",
+    for pkg, (fname, _, _, _) in SRC.items():
+        record(f"{pkg} source tarball: the same bytes as the build carried (= the pin), once", sha(os.path.join(out, fname)) == PIN[pkg])
+    record("SHA256SUMS lists the eleven files, not itself, hashes match",
            sorted(n for _, n in sums) == sorted(n for n in want if n != "SHA256SUMS")
            and all(sha(os.path.join(out, n)) == h for h, n in sums))
     for pl, (target, binary) in PLAT.items():
@@ -195,17 +211,24 @@ if names == want:
         record(f"{pl}: fixed layout with binary, LICENSE, THIRD-PARTY-LICENSES, README.txt", layout <= set(members), members)
         record(f"{pl}: unpacked binary is the manifest's, mode 0755", bin_ok)
         record(f"{pl}: fixed archive metadata (time, owner, no gzip name or time)", meta_ok)
-        record(f"{pl}: licences complete, {4 if pl in RL else 3} texts (build:<dir> needs none, compiled owner covered)",
+        linked = [pkg for pkg, v in SRC.items() if pl in v[2]]
+        record(f"{pl}: licences complete, {3 + len(linked)} texts (build:<dir> needs none, compiled owner covered)",
                man["third_party_licenses"]["status"] == "complete"
-               and len(man["third_party_licenses"]["entries"]) == (4 if pl in RL else 3), man["third_party_licenses"])
-        st = man["source_tarballs"]
-        if pl in RL:
-            rd = (tarfile.open(os.path.join(out, top + ".tar.gz")).extractfile(f"{top}/README.txt").read().decode())
-            record(f"{pl}: manifest and README name the readline source tarball", len(st) == 1 and st[0]["file"] == "readline-8.0.tar.gz"
-                   and st[0]["sha256"] == RL_PIN == st[0]["pinned_sha256"] and st[0]["licence_text"] == "THIRD-PARTY-LICENSES/depends/readline/COPYING"
-                   and "readline-8.0.tar.gz, published next to this archive" in rd and "GNU readline" in rd, (st, rd[-600:]))
+               and len(man["third_party_licenses"]["entries"]) == 3 + len(linked), man["third_party_licenses"])
+        st = {t["package"]: t for t in man["source_tarballs"]}
+        if pl.startswith("windows"):
+            rd = zipfile.ZipFile(os.path.join(out, top + ".zip")).read(f"{top}/README.txt").decode()
         else:
-            record(f"{pl}: no readline, no source tarball in its manifest", st == [], st)
+            rd = tarfile.open(os.path.join(out, top + ".tar.gz")).extractfile(f"{top}/README.txt").read().decode()
+        record(f"{pl}: manifest names exactly the source tarballs of {', '.join(linked)}", sorted(st) == sorted(linked), st)
+        for pkg in linked:
+            fname, lname, _, name = SRC[pkg]
+            t = st.get(pkg, {})
+            record(f"{pl}: manifest and README name the {pkg} source tarball", t.get("file") == fname
+                   and t.get("sha256") == PIN[pkg] == t.get("pinned_sha256") and t.get("licence_text") == f"THIRD-PARTY-LICENSES/depends/{pkg}/{lname}"
+                   and f"{fname}, published next to this archive" in rd and f"source code of\n  {name} exactly" in rd, (t, rd[-900:]))
+        for pkg in set(SRC) - set(linked):
+            record(f"{pl}: {pkg} not linked, README does not name its tarball", SRC[pkg][0] not in rd)
         record(f"{pl}: manifest names commit, run, version and own commit subjects",
                man["source"]["commit"] == commit and man["workflow"]["run_id"] == "5" and man["version_string"] == vs
                and [c["subject"] for c in man["source"]["own_commits"]] == ["Add the first own change", "Add the second own change"])
@@ -278,24 +301,49 @@ variant("other-run", one("windows-x86_64", lambda m: m["workflow"].__setitem__("
 variant("binary-changed", lambda dv: open(os.path.join(dv, "linux-aarch64", "zephyrd"), "ab").write(b"x"), 1, "binary does not match its manifest")
 variant("inventory-not-in-manifest", lambda dv: open(os.path.join(dv, "linux-x86_64", "build-logs", "link-inventory.tsv"), "a").write("status\tx\t-\t-\ty\n"),
         1, "does not match the verified manifest")
-def no_tarball(dv):
-    os.remove(os.path.join(dv, "macos-x86_64", "build-logs", "depends-sources", "readline-8.0.tar.gz"))
-variant("readline-linked-tarball-missing", no_tarball, 1, "missing from the build artifact")
+def no_tarball(pkg, plat):
+    def f(dv):
+        os.remove(os.path.join(dv, plat, "build-logs", "depends-sources", SRC[pkg][0]))
+    return f
 
 
-def tarball_not_pin(dv):
-    bad = b"other bytes"
-    hb = hashlib.sha256(bad).hexdigest()
-    pd = os.path.join(dv, "linux-aarch64")
-    open(os.path.join(pd, "build-logs", "depends-sources", "readline-8.0.tar.gz"), "wb").write(bad)
-    edit_inv(dv, "linux-aarch64", lambda r: [x if "readline" not in x[2] or x[0] == "input" else
-                                             x[:3] + ([hb] if x[0] == "source-tarball" else [x[3]]) + [x[4].replace(RL_PIN, hb)] for x in r])
-variant("readline-tarball-not-the-pin", tarball_not_pin, 1, f"pin {RL_PIN}")
+def tarball_not_pin(pkg, plat):
+    def f(dv):
+        bad = b"other bytes"
+        hb = hashlib.sha256(bad).hexdigest()
+        open(os.path.join(dv, plat, "build-logs", "depends-sources", SRC[pkg][0]), "wb").write(bad)
+        edit_inv(dv, plat, lambda r: [x if x[2] != f"depends:{pkg}" or x[0] == "input" else
+                                      x[:3] + ([hb] if x[0] == "source-tarball" else [x[3]]) + [x[4].replace(PIN[pkg], hb)] for x in r])
+    return f
 
 
-def no_row(dv):
-    edit_inv(dv, "linux-x86_64", lambda r: [x for x in r if x[0] != "source-tarball"])
-variant("readline-linked-no-tarball-row", no_row, 1, "carries 0 source tarballs")
+def no_row(pkg, plat):
+    def f(dv):
+        edit_inv(dv, plat, lambda r: [x for x in r if not (x[0] == "source-tarball" and x[2] == f"depends:{pkg}")])
+    return f
+
+
+def unlinked(pkg):
+    def f(dv):
+        for plat in SRC[pkg][2]:
+            os.remove(os.path.join(dv, plat, "build-logs", "depends-sources", SRC[pkg][0]))
+            edit_inv(dv, plat, lambda r: [x for x in r if x[2] != f"depends:{pkg}"])
+    return f
+
+
+for pkg, (fname, _, plats, _) in SRC.items():
+    plat = plats[-1]
+    variant(f"{pkg}-linked-tarball-missing", no_tarball(pkg, plat), 1, f"{plat}: source tarball depends-sources/{fname} of depends:{pkg} missing from the build artifact")
+    variant(f"{pkg}-tarball-not-the-pin", tarball_not_pin(pkg, plats[0]), 1, f"pin {PIN[pkg]}")
+    variant(f"{pkg}-linked-no-tarball-row", no_row(pkg, plat), 1, f"depends:{pkg} is linked but the build carries 0 source tarballs")
+    dv = base_set(f"{pkg}-not-linked")
+    unlinked(pkg)(dv)
+    p, outv = run(f"{pkg}-not-linked", dv)
+    ms = [json.load(open(os.path.join(outv, f"zephyrd-{vs}-{pl}.manifest.json"))) for pl in PLAT] if p.returncode == 0 else []
+    record(f"{pkg}-not-linked: exit 0, no tarball of it in the set or any manifest, licences complete",
+           p.returncode == 0 and fname not in os.listdir(outv) and len(ms) == 4
+           and all(pkg not in [t["package"] for t in m["source_tarballs"]] and m["third_party_licenses"]["status"] == "complete" for m in ms),
+           (p.stdout + p.stderr)[-300:])
 
 variant("licence-text-changed", lambda dv: open(os.path.join(dv, "linux-x86_64", "build-logs", "licenses", "depends", "dep", "COPYING"), "a").write("x"),
         1, "does not match its inventory hash")
@@ -359,6 +407,55 @@ record("statement naming LICENSE_1_0.txt: INDEX.txt points at the text of that n
        p.returncode == 0 and "The statement names LICENSE_1_0.txt; a text of that name is in this archive:" in idx
        and "THIRD-PARTY-LICENSES/depends/boost/LICENSE_1_0.txt (owner depends:boost)" in idx, (p.stdout + p.stderr)[-300:] + idx[-600:])
 os.remove(os.path.join(co, "contrib", "depends", "packages", "boost.mk"))
+
+# compiled-in files without a licence statement (round 17): informational, not in the archive
+NOSTAT = ("external/nostat/a.s", "external/mixed/config.h")
+
+
+def no_statement(dv):
+    pd = os.path.join(dv, "linux-x86_64")
+    rel = "licenses/tree-header/external/mixed/mixed.cc.lines-1-3.txt"
+    os.makedirs(os.path.join(pd, "build-logs", os.path.dirname(rel)))
+    open(os.path.join(pd, "build-logs", rel), "w").write("/*\n * Licensed under the MIT License (synthetic)\n */\n")
+    h = sha(os.path.join(pd, "build-logs", rel))
+    edit_inv(dv, "linux-x86_64", lambda r: r + [
+        ["compiled", "/src/build/release/x/libnostat.a(a.s.o)", "tree:external/nostat", "a" * 64, "source=external/nostat/a.s object=build/release/x/a.s.o"],
+        ["statement", "external/nostat/a.s", "tree:external/nostat", "b" * 64, "none"],
+        ["statement", "external/nostat/b.s", "tree:external/nostat", "c" * 64, "none"],
+        ["header", "/src/external/mixed", "tree:external/mixed", "-", "files compiled into the linked objects"],
+        ["statement", "external/mixed/mixed.cc", "tree:external/mixed", "d" * 64, f"lines=1-3 text_sha256={h}"],
+        ["license", rel, "tree:external/mixed", h, "tree-header from=source-header file=external/mixed/mixed.cc lines=1-3 file_sha256=" + "d" * 64],
+        ["statement", "external/mixed/config.h", "tree:external/mixed", "e" * 64, "none"]])
+
+
+dv = base_set("no-statement")
+no_statement(dv)
+p, outv = run("no-statement", dv)
+texts = ""
+mlin = {}
+if p.returncode == 0:
+    top = f"zephyrd-{vs}-linux-x86_64"
+    with tarfile.open(os.path.join(outv, top + ".tar.gz")) as tf:
+        texts = "".join(tf.extractfile(m).read().decode("utf-8", "replace") for m in tf.getmembers()
+                        if m.isfile() and not m.name.endswith("/zephyrd"))
+        names_ = [m.name for m in tf.getmembers()]
+    mtext = open(os.path.join(outv, top + ".manifest.json")).read()
+    mlin = json.loads(mtext)
+record("files without a licence statement (a directory with none, one beside a stated file): exit 0, licences complete",
+       p.returncode == 0 and mlin.get("third_party_licenses", {}).get("status") == "complete"
+       and mlin["third_party_licenses"]["reasons"] == [], (p.stdout + p.stderr)[-300:])
+record("files without a licence statement: not named in INDEX.txt, README.txt or the manifest; the stated file's text is",
+       p.returncode == 0 and not any(x in texts or x in mtext for x in NOSTAT + ("nostat", "config.h"))
+       and "Licensed under the MIT License (synthetic)" in texts and "external/mixed/mixed.cc" in texts,
+       [x for x in NOSTAT if x in texts or x in mtext])
+variant("statement-row-without-text", lambda dv: edit_inv(dv, "linux-x86_64", lambda r: r + [
+            ["header", "/src/external/half", "tree:external/half", "-", "files compiled into the linked objects"],
+            ["statement", "external/half/h.h", "tree:external/half", "f" * 64, "lines=1-2 text_sha256=" + "f" * 64],
+            ["statement", "external/half/g.h", "tree:external/half", "f" * 64, "none"]]),
+        0, "no licence text for tree:external/half", "incomplete")
+variant("no-statement-but-unresolved-line", lambda dv: (no_statement(dv), edit_inv(dv, "linux-x86_64", lambda r: r + [
+            ["status", "unresolved", "tree:external/nostat", "-", "no licence file in external/nostat or above it within its boundary, and no compiled-in file of external/nostat whose head could be read"]])),
+        0, "unresolved: tree:external/nostat", "incomplete")
 
 # compare-pr-run.py against a loopback stub of the REST API (synthetic runs and artifact names)
 import threading

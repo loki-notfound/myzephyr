@@ -23,9 +23,9 @@
 #  4. The artifact release-set-<commit> of that run: not expired; its zip is downloaded and
 #     must have GitHub's recorded digest; then check-release-set.py: SHA256SUMS, every
 #     manifest (commit, run and attempt, version string without "release", complete
-#     licences), every archive unpacks to the named binary, and the GNU readline source
-#     tarball is present with the pinned hash (of the verified clone's recipe) wherever a
-#     manifest's licence list names readline. It writes the release notes.
+#     licences), every archive unpacks to the named binary, and the source tarballs of GNU
+#     readline, libusb and ZeroMQ are present with the pinned hash (of the verified clone's
+#     recipe) wherever a manifest's licence list names the package. It writes the release notes.
 #  5. gh release create <tag> --draft --verify-tag with exactly the flat files of the set
 #     (a quoted array) and the notes. With --dry-run everything except this step runs, and the
 #     exact command and file list are printed.
