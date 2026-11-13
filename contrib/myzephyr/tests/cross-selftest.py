@@ -5,7 +5,7 @@ check-embedded.py, make-cross-manifest.py and verify-cross-artifact.py.
   cross-selftest.py <work-dir>     (<work-dir> must not exist)
 
 Fixtures: tests/cross-fixture/<target>.json hold metadata measured on real local cross builds
-(macOS x86_64 and Windows of 13d6352b6, Linux AArch64 of 3dea684bb, macOS arm64 of 8107755c0:
+(Windows of 13d6352b6, Linux AArch64 of 3dea684bb, macOS x86_64 and arm64 of 98423646e:
 static report values and the build-log records). From them this script makes small SYNTHETIC
 binaries: Mach-O and PE files with the measured architecture, minimum OS and library list (the
 arm64 Mach-O with an ad-hoc, linker-signed code signature whose page hashes are computed over
@@ -355,6 +355,9 @@ expect_checker("extra library", "x86_64-apple-darwin", m, macho(m, V, dylibs=m["
                "outside the allowed OS set")
 expect_checker("extra non-allowed framework", "x86_64-apple-darwin", m,
                macho(m, V, dylibs=m["dylibs"] + ["/System/Library/Frameworks/Metal.framework/Versions/A/Metal"]), 1,
+               "outside the allowed OS set")
+expect_checker("Security framework (only the hardware-wallet checks linked it)", "x86_64-apple-darwin", m,
+               macho(m, V, dylibs=m["dylibs"] + ["/System/Library/Frameworks/Security.framework/Versions/A/Security"]), 1,
                "outside the allowed OS set")
 expect_checker("libSystem missing", "x86_64-apple-darwin", m,
                macho(m, V, dylibs=[x for x in m["dylibs"] if "libSystem" not in x]), 1, "libSystem")

@@ -13,7 +13,7 @@ Fails (exit 1) unless all of these hold:
     build of 8107755c0; Apple Silicon Macs start at macOS 11);
   - the dynamic linker is /usr/lib/dyld;
   - every linked library is an OS one from this set: the frameworks Foundation, AppKit, IOKit,
-    Security, Kerberos, ApplicationServices, CoreFoundation (as
+    Kerberos, ApplicationServices, CoreFoundation (as
     /System/Library/Frameworks/<Name>.framework/Versions/<letter>/<Name>), and
     /usr/lib/libc++.1.dylib, /usr/lib/libSystem.B.dylib; libSystem must be among them;
   - no LC_RPATH;
@@ -44,8 +44,7 @@ CSMAGIC_EMBEDDED_SIGNATURE, CSMAGIC_CODEDIRECTORY = 0xFADE0CC0, 0xFADE0C02
 CSSLOT_CODEDIRECTORY, CSSLOT_SIGNATURESLOT = 0, 0x10000
 CS_ADHOC, CS_LINKER_SIGNED = 0x2, 0x20000
 CS_HASHTYPE_SHA256 = 2
-FRAMEWORKS = {"Foundation", "AppKit", "IOKit", "Security", "Kerberos", "ApplicationServices",
-              "CoreFoundation"}
+FRAMEWORKS = {"Foundation", "AppKit", "IOKit", "Kerberos", "ApplicationServices", "CoreFoundation"}
 FRAMEWORK_RE = re.compile(r"^/System/Library/Frameworks/([A-Za-z]+)\.framework/Versions/[A-Z]/\1$")
 USR_LIB = {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib"}
 
