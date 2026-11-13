@@ -1,37 +1,33 @@
-## myzephyr (personal build)
+## myzephyr (my personal build)
 
-This branch is a personal build of the Zephyr daemon by its maintainer. It is **not**
-part of zephyr-backports and not an official Zephyr release. It is the signed
-zephyr-backports tag `v2.3.0-sec.2` plus a small number of own commits, each marked
-`Origin: myzephyr` and signed by the maintainer key
-`31DA 39AB 43E0 CA67 F1F3  A661 BA2A FF22 DF8A 4A13`. The next section describes that base.
+This branch holds my personal build of the Zephyr daemon. It is **not** part of
+zephyr-backports and not an official Zephyr release. It is the signed zephyr-backports
+tag `v2.3.0-sec.2` plus my own commits, each marked `Origin: myzephyr` and signed with my
+key `31DA 39AB 43E0 CA67 F1F3  A661 BA2A FF22 DF8A 4A13`. The next section describes
+that base.
 
-Own commits above the base:
-- The official public node `remote-node.zephyrprotocol.com` is added to the mainnet
-  DNS seeds, and its address `24.199.101.125:17766` to the mainnet fallback seeds. The
-  compiled-in seeds no longer accepted connections, so a new node found no peer.
-- A second fallback node, `85.215.93.176:17766`, is added to the mainnet fallback
-  seeds. The maintainer vouches for it as a reliable fallback.
-- Build and test tooling: `contrib/myzephyr/` and
-  `.github/workflows/daemon-release-baseline.yml`. It builds the daemon for Linux x86_64,
-  Linux AArch64, macOS x86_64, macOS arm64 (Apple Silicon; upstream ships no such daemon)
-  and Windows x86_64.
-- The GoogleTest recipe of `contrib/depends` (used only for unit-test builds) uses the
-  compiler and tools depends selected instead of assuming they are in its native tool
-  directory, and builds the requested Debug type.
+Releases: https://github.com/loki-notfound/myzephyr/releases. They hold `zephyrd` for
+Linux x86_64 and AArch64, macOS x86_64 and arm64, and Windows x86_64. Upstream ships no
+macOS arm64 daemon.
 
-Compatibility: no change to consensus, transaction relay, the P2P protocol, RPC, wallet
-or database formats; the version number stays upstream's. Interoperability with upstream
-nodes and wallets is still being tested, and no release has been published.
+What I changed:
+- A fresh node finds peers again. The mainnet seeds compiled into v2.3.0 no longer accept
+  connections, so I added `remote-node.zephyrprotocol.com`, its address
+  `24.199.101.125:17766` and a second fallback node, `85.215.93.176:17766`.
+- The GoogleTest recipe in `contrib/depends`, used only for unit-test builds, now uses
+  the compiler depends selected.
+- Build, test and release tooling: `contrib/myzephyr/` and
+  `.github/workflows/daemon-release-baseline.yml`.
 
-Verifying a build: `contrib/myzephyr/README.md` describes the pinned builder, the source
-checks and the build manifest. Binaries are built first and tagged afterwards: they come
-from a checkout without tags and report `v2.3.0-<first 9 hex digits of the commit>`, also
-after the release tag is put on that commit. To reproduce that string, build the tagged
-commit from a checkout without tags (`git clone --no-tags`, or delete the tag locally);
-with the tag present, the build reports `v2.3.0-release` instead. The base tag is signed by
-`FB39 94F0 997C A6F0 43D7  2491 9EFF 03F5 27D2 40A1`; both public keys are in
-`contrib/myzephyr/keys/`.
+Consensus, transaction relay, the P2P protocol, RPC, and the wallet and database formats
+are unchanged; the version number stays upstream's.
+
+Binaries are built first and tagged afterwards, so they report
+`v2.3.0-<first 9 hex digits of the commit>`. To reproduce that string, build the tagged
+commit from a checkout without tags (`git clone --no-tags`); with the tag present the
+build reports `v2.3.0-release`. `contrib/myzephyr/README.md` describes the builder and the
+checks. The base tag is signed by `FB39 94F0 997C A6F0 43D7  2491 9EFF 03F5 27D2 40A1`;
+both public keys are in `contrib/myzephyr/keys/`.
 
 ## Security backports (this fork)
 
