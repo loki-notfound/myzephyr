@@ -22,7 +22,7 @@
 #     ancestor of it (and the branch head equals what the API says). verify-source.sh
 #     --release-tag <tag> on the clean checkout of that commit: base tag and signature, every
 #     own commit, exactly this annotated tag at HEAD, signed by the pinned maintainer key.
-#     contrib/myzephyr/RELEASE at that commit is exactly <tag>.
+#     contrib/myzephyr/release/NAME at that commit is exactly <tag>.
 #  4. The artifact release-set-<commit> of that run: not expired; its zip is downloaded and
 #     must have GitHub's recorded digest; then check-release-set.py: SHA256SUMS over the five
 #     archives, every manifest (release <tag>, commit, run and attempt, version string without
@@ -115,7 +115,7 @@ bash "$tools/verify-source.sh" --checkout "$clone" --expected-head "$tag_commit"
   --base-key "$tools/keys/zephyr-backports-release.asc" --base-fingerprint "$BASE_FINGERPRINT" \
   --maintainer-key "$tools/keys/myzephyr-maintainer.asc" --maintainer-fingerprint "$MAINTAINER_FINGERPRINT" \
   --release-tag "$tag" --out "$workdir/source-identity.txt" || refuse "source or tag verification failed"
-[ "$(g show "$tag_commit:contrib/myzephyr/RELEASE" 2> /dev/null)" = "$tag" ] || refuse "contrib/myzephyr/RELEASE at $tag_commit is not $tag"
+[ "$(g show "$tag_commit:contrib/myzephyr/release/NAME" 2> /dev/null)" = "$tag" ] || refuse "contrib/myzephyr/release/NAME at $tag_commit is not $tag"
 
 # 4. the release set
 gh api "repos/$repo/actions/runs/$run/artifacts?per_page=100" > "$workdir/artifacts.json" || refuse "cannot list the run's artifacts"

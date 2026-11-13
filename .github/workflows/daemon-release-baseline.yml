@@ -40,7 +40,7 @@
 #                     binary format (for macOS arm64 also its ad-hoc code signature) and
 #                     embedded strings, manifest (nothing is executed)
 #   package           needs every job above: downloads and verifies the five artifacts again,
-#                     packs one archive per platform named after contrib/myzephyr/RELEASE
+#                     packs one archive per platform named after contrib/myzephyr/release/NAME
 #                     (binary, LICENSE, THIRD-PARTY-LICENSES from the build's link inventory,
 #                     README.txt), SHA256SUMS over the five archives and a manifest per platform
 #                     (contrib/myzephyr/release/make-release-set.py) and uploads them as the

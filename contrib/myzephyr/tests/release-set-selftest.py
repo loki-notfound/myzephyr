@@ -5,7 +5,7 @@ invented licence texts and a small git checkout made here). Not a real release s
   release-set-selftest.py <work-dir>      (<work-dir> must not exist)
 
 Valid set: five archives and five manifests, SHA256SUMS over exactly the five archives,
-named after contrib/myzephyr/RELEASE of the checkout; fixed layout
+named after contrib/myzephyr/release/NAME of the checkout; fixed layout
 zephyrd-<release>-<platform>/ with the binary (0755), LICENSE,
 THIRD-PARTY-LICENSES/ and README.txt; tar members with time SOURCE_DATE_EPOCH, owner 0:0;
 gzip without name and time; zip entries with fixed time and modes; every manifest valid
@@ -21,7 +21,7 @@ objects' sources ("compiled" rows) do; a source-header statement naming LICENSE_
 an INDEX.txt note pointing at the text of that name. Copyleft packages: the artifacts link
 synthetic readline (Linux and macOS), libusb (Linux) and zeromq (all five); the manifest and
 README.txt of each platform name exactly the linked ones with version, licence (as its text
-names it), URL and pinned hash from the checkout's recipe. Refused: RELEASE missing or not one
+names it), URL and pinned hash from the checkout's recipe. Refused: release/NAME missing or not one
 line v<x.y.z>-sec.<n>-my.<n>; a linked copyleft package whose recipe names no URL.
 Round 17 (owner decision: a compiled-in file without a licence statement is shipped as upstream
 ships it): "statement ... none" rows, for a directory where no file states anything and for one
@@ -86,8 +86,8 @@ for pkg in SRC:
         f"package={pkg}\n$(package)_version=1.0\n$(package)_download_path=https://example.invalid/{pkg}/v$($(package)_version)/\n"
         f"$(package)_file_name=$(package)-$($(package)_version).tar.gz\n$(package)_sha256_hash={PIN[pkg]}\n")
 RELEASE = "v2.3.0-sec.2-my.9"
-os.makedirs(os.path.join(co, "contrib", "myzephyr"))
-open(os.path.join(co, "contrib", "myzephyr", "RELEASE"), "w").write(RELEASE + "\n")
+os.makedirs(os.path.join(co, "contrib", "myzephyr", "release"))
+open(os.path.join(co, "contrib", "myzephyr", "release", "NAME"), "w").write(RELEASE + "\n")
 sh("git", "init", "-q", co)
 sh("git", "-C", co, *genv, "add", "-A"); sh("git", "-C", co, *genv, "commit", "-q", "-m", "base")
 own = []
@@ -181,7 +181,7 @@ record("valid set written", p.returncode == 0, p.stderr[-400:])
 names = sorted(os.listdir(out)) if os.path.isdir(out) else []
 archives = sorted(f"zephyrd-{RELEASE}-{pl}.{'zip' if pl.startswith('windows') else 'tar.gz'}" for pl in PLAT)
 want = sorted(archives + [f"zephyrd-{RELEASE}-{pl}.manifest.json" for pl in PLAT] + ["SHA256SUMS"])
-record("exactly five archives named after RELEASE, five manifests and SHA256SUMS", names == want, names)
+record("exactly five archives named after release/NAME, five manifests and SHA256SUMS", names == want, names)
 if names == want:
     sums = [l.split("  ") for l in open(os.path.join(out, "SHA256SUMS")).read().splitlines()]
     record("SHA256SUMS lists exactly the five archives, hashes match",
@@ -325,9 +325,9 @@ def variant_co(name, rel, content, frag):
     RESTORE.clear()
 
 
-variant_co("release-file-missing", "contrib/myzephyr/RELEASE", None, "has no contrib/myzephyr/RELEASE")
-variant_co("release-file-two-lines", "contrib/myzephyr/RELEASE", RELEASE + "\n" + RELEASE + "\n", "expected one line")
-variant_co("release-file-not-a-release-name", "contrib/myzephyr/RELEASE", "v2.3.0-sec.2\n", "expected one line")
+variant_co("release-file-missing", "contrib/myzephyr/release/NAME", None, "has no contrib/myzephyr/release/NAME")
+variant_co("release-file-two-lines", "contrib/myzephyr/release/NAME", RELEASE + "\n" + RELEASE + "\n", "expected one line")
+variant_co("release-file-not-a-release-name", "contrib/myzephyr/release/NAME", "v2.3.0-sec.2\n", "expected one line")
 variant_co("copyleft-recipe-without-url", "contrib/depends/packages/zeromq.mk",
            f"package=zeromq\n$(package)_version=1.0\n$(package)_sha256_hash={PIN['zeromq']}\n", "names no version, URL and hash")
 

@@ -51,7 +51,7 @@ its packages unchanged.
 
 | file | purpose |
 |---|---|
-| `RELEASE` | the name of the release this commit line prepares, e.g. `v2.3.0-sec.2-my.2`; bumped by hand by the first change meant for a later release |
+| `release/NAME` | the name of the release this commit line prepares, e.g. `v2.3.0-sec.2-my.2`; bumped by hand by the first change meant for a later release |
 | `linux/Dockerfile`, `linux/run-builder.sh`, `linux/build-in-container.sh` | Linux x86_64 builder (Debian 11 by digest, one snapshot.debian.org timestamp, GCC 9) and the build in it as a non-root user: `release` (target `daemon`) or `tests` (`TESTS=1`, Debug, `unit_tests`, `test_notifier`) |
 | `linux/run-unit-tests.sh` | runs the built `unit_tests` natively (CI) or in the image (diagnosis); records environment, inventory, log and XML |
 | `cross/Dockerfile`, `cross/run-builder.sh`, `cross/build-in-container.sh` | cross builders from the same base and snapshot: Linux AArch64 (GCC 9.3 with one hash-guarded header fix, below), macOS x86_64 and arm64 (depends' clang and SDK; ld64 signs arm64 ad hoc), Windows x86_64 (MinGW-w64, posix threads) |
@@ -75,7 +75,7 @@ its packages unchanged.
 
 The `package` job needs every build and runtime job. It verifies the five artifacts again and
 makes one archive per platform (`linux-x86_64`, `linux-aarch64`, `macos-x86_64`,
-`macos-arm64`, `windows-x86_64`), named `zephyrd-<release>-<platform>` after `RELEASE`:
+`macos-arm64`, `windows-x86_64`), named `zephyrd-<release>-<platform>` after `release/NAME`:
 the binary, `LICENSE`, `THIRD-PARTY-LICENSES/` and a short `README.txt`. Linux and macOS get
 `.tar.gz`, Windows `.zip`, with fixed times (the commit time), owners and modes; each archive
 is read back and must hold exactly the staged files. `SHA256SUMS` lists the five archives;
@@ -94,7 +94,7 @@ version, licence, upstream URL and pinned SHA256 from its depends recipe.
 After the owner has pushed the signed tag on the proven commit, `release/draft-release.sh
 --gate-note FILE <tag> <run-id>` runs locally; nothing is rebuilt. It requires a successful
 push run on `my/v2.3.0` whose head is the tag's commit, verifies the tag in a fresh clone
-without tags, requires `RELEASE` at that commit to equal the tag, checks GitHub's digest of the
+without tags, requires `release/NAME` at that commit to equal the tag, checks GitHub's digest of the
 release-set artifact, `SHA256SUMS`, every manifest and every archive, and refuses an existing
 release. The notes come from `release/WHATSNEW.md` at the tagged commit (written by hand for
 each release), the manifests and the gate note (the full sync and database resume of the

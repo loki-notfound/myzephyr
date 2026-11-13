@@ -12,7 +12,7 @@ other and with the other targets (one commit, one version string, one run, one b
 --checkout is the job's own verified checkout of that commit (LICENSE, depends recipes,
 own commit subjects).
 
-The release name is the one line of contrib/myzephyr/RELEASE in the checkout (the release
+The release name is the one line of contrib/myzephyr/release/NAME in the checkout (the release
 this commit line prepares, e.g. v2.3.0-sec.2-my.2); the binaries still report
 v<version>-<9 hex of the commit>, since builds never see a tag.
 Archive per platform, fixed layout:
@@ -436,11 +436,11 @@ def main():
     epoch = first["source"]["commit_time"]
     vs = "v" + version
     try:
-        release = open(os.path.join(checkout, "contrib", "myzephyr", "RELEASE"), encoding="utf-8").read()
+        release = open(os.path.join(checkout, "contrib", "myzephyr", "release", "NAME"), encoding="utf-8").read()
     except OSError:
-        fail("the checkout has no contrib/myzephyr/RELEASE")
+        fail("the checkout has no contrib/myzephyr/release/NAME")
     if not RELEASE_RE.fullmatch(release.rstrip("\n")) or release.count("\n") != 1 or not release.endswith("\n"):
-        fail(f"contrib/myzephyr/RELEASE is {release!r}, expected one line v<x.y.z>-sec.<n>-my.<n>")
+        fail(f"contrib/myzephyr/release/NAME is {release!r}, expected one line v<x.y.z>-sec.<n>-my.<n>")
     release = release.rstrip("\n")
     own = [{"commit": c["commit"], "subject": git(checkout, "log", "-1", "--format=%s", c["commit"]), "paths": c["paths"]}
            for c in first["source"]["own_commits"]]

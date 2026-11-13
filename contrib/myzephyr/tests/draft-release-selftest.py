@@ -6,7 +6,7 @@ made by make-release-set.py. Nothing contacts GitHub; nothing here is a real rel
   draft-release-selftest.py <work-dir>      (<work-dir> must not exist)
 
 World: a checkout R with this directory's scripts, throwaway public keys in
-contrib/myzephyr/keys/, contrib/myzephyr/RELEASE naming the release tag and a workflow file
+contrib/myzephyr/keys/, contrib/myzephyr/release/NAME naming the release tag and a workflow file
 whose pins name them; a base commit with a tag
 signed by the throwaway base key (refs/tags/v-selftest-base), one own commit signed by the
 throwaway maintainer key ("Origin: myzephyr"), branch my/v2.3.0, the release tag
@@ -19,7 +19,7 @@ note and the copyleft sources (synthetic readline on Linux and macOS, libusb on 
 on all five, pinned in the base commit's contrib/depends/packages/<package>.mk).
 Refused, one change each: a release exists; run event pull_request; run on another branch;
 run not successful; run built another commit; tag commit not on the branch; tag signed by
-another key; lightweight tag; a tag other than RELEASE at the tagged commit; GitHub digest
+another key; lightweight tag; a tag other than release/NAME at the tagged commit; GitHub digest
 differs; a file of the set changed (SHA256SUMS); an extra file in the set; manifest of another
 run; incomplete licences; archive binary differs from the manifest; a copyleft source other
 than the pin; a linked copyleft package not named; the gate note empty or a placeholder;
@@ -104,7 +104,7 @@ try:
         open(os.path.join(R, "contrib", "depends", "packages", f"{pkg}.mk"), "w").write(
             f"package={pkg}\n$(package)_version=1.0\n$(package)_download_path=https://example.invalid/{pkg}\n"
             f"$(package)_file_name=$(package)-$($(package)_version).tar.gz\n$(package)_sha256_hash={PIN[pkg]}\n")
-    open(os.path.join(R, "contrib", "myzephyr", "RELEASE"), "w").write(TAG + "\n")
+    open(os.path.join(R, "contrib", "myzephyr", "release", "NAME"), "w").write(TAG + "\n")
     GATE = os.path.join(work, "gate-note.md")
     open(GATE, "w").write("Full sync and database resume of the Linux x86_64 binary: done (synthetic gate note).\n")
 
@@ -316,8 +316,8 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
     def other_tag():
         G("tag", "-s", "-u", MAINT, "-m", "v2.3.0-sec.2-my.3", "v2.3.0-sec.2-my.3", C)
         run("git", "-C", origin, "fetch", "-q", R, "+refs/tags/v2.3.0-sec.2-my.3:refs/tags/v2.3.0-sec.2-my.3")
-    scenario("a tag other than RELEASE at the tagged commit", setup=other_tag, args=["--gate-note", GATE, "v2.3.0-sec.2-my.3", RUN],
-             want_exit=1, frag="contrib/myzephyr/RELEASE at")
+    scenario("a tag other than release/NAME at the tagged commit", setup=other_tag, args=["--gate-note", GATE, "v2.3.0-sec.2-my.3", RUN],
+             want_exit=1, frag="contrib/myzephyr/release/NAME at")
     scenario("artifact digest differs from GitHub's", digest="1" * 64, want_exit=1, frag="does not match GitHub's digest")
     scenario("artifact expired", expired=True, want_exit=1, frag="not available with a digest")
 
