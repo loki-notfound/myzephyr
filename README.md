@@ -19,6 +19,9 @@ What I changed:
 - Build, test and release tooling: `contrib/myzephyr/` and
   `.github/workflows/daemon-release-baseline.yml`.
 
+The release binaries are built without hardware-wallet support and without the wallet
+fast-path assembly; a daemon uses neither.
+
 Consensus, transaction relay, the P2P protocol, RPC, and the wallet and database formats
 are unchanged; the version number stays upstream's.
 
