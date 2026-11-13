@@ -80,9 +80,13 @@ step() {
 
 depends_args=(-C contrib/depends HOST="$host_triplet" -j"$JOBS"
               "x86_64_linux_CC=$host_cc" "x86_64_linux_CXX=$host_cxx")
+# A daemon-only build: no hardware-wallet support (HIDAPI not looked for, Trezor off) and
+# the portable wallet crypto instead of the supercop assembly; the daemon uses neither.
 cmake_args=(-S . -B "$build_dir"
             -DCMAKE_TOOLCHAIN_FILE="$src/$prefix/share/toolchain.cmake"
-            -DCMAKE_SKIP_RPATH=ON)
+            -DCMAKE_SKIP_RPATH=ON
+            -DCMAKE_DISABLE_FIND_PACKAGE_HIDAPI=ON -DUSE_DEVICE_TREZOR=OFF
+            -DMONERO_WALLET_CRYPTO_LIBRARY=cn)
 
 if [ "$mode" = release ]; then
   step depends make "${depends_args[@]}"

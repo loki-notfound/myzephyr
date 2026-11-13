@@ -32,6 +32,11 @@ case "$target" in
     cc_id=() exe=zephyrd ;;
   *) echo "usage: $0 aarch64-linux-gnu|x86_64-w64-mingw32|x86_64-apple-darwin|aarch64-apple-darwin" >&2; exit 2 ;;
 esac
+# A daemon-only build: no hardware-wallet support (HIDAPI not looked for, Trezor off); on
+# macOS x86_64, the only target here where CMake would pick the supercop assembly, the
+# portable wallet crypto instead. The daemon uses neither.
+cmake_extra=(-DCMAKE_DISABLE_FIND_PACKAGE_HIDAPI=ON -DUSE_DEVICE_TREZOR=OFF)
+if [ "$target" = x86_64-apple-darwin ]; then cmake_extra+=(-DMONERO_WALLET_CRYPTO_LIBRARY=cn); fi
 : "${SOURCE_DATE_EPOCH:?SOURCE_DATE_EPOCH must be set to the source commit time}"
 export SOURCE_DATE_EPOCH
 JOBS=${JOBS:-4}
@@ -84,7 +89,7 @@ case "$target" in *-apple-darwin)
   echo "native clang: $("$prefix/native/bin/clang" --version | sed -n 1p)" >> "$logs/toolchain.txt" ;;
 esac
 step configure cmake -S . -B "$build_dir" \
-  -DCMAKE_TOOLCHAIN_FILE="$src/$prefix/share/toolchain.cmake" -DCMAKE_SKIP_RPATH=ON
+  -DCMAKE_TOOLCHAIN_FILE="$src/$prefix/share/toolchain.cmake" -DCMAKE_SKIP_RPATH=ON "${cmake_extra[@]}"
 step build cmake --build "$build_dir" --target daemon --parallel "$JOBS"
 test -f "$build_dir/bin/$exe"
 sha256sum "$build_dir/bin/$exe" >> "$steps"
