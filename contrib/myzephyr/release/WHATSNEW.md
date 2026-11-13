@@ -1,0 +1,3 @@
+The daemon's code is the same as in `v2.3.0-sec.2-my.1`, with the one daemon change of this line: a fresh node finds peers again. The two mainnet seeds compiled into v2.3.0 no longer accept connections, so I added the official public node and one more fallback node. Consensus, P2P protocol, RPC and the database format are untouched. To replace an upstream `zephyrd`: stop it, swap the binary, start it again with the same data directory and options.
+
+What changed since my.1 is the packaging. The archives carry the release name, the release holds only the five archives and the signed `SHA256SUMS`, and the binaries no longer contain the hardware-wallet code and the wallet fast-path assembly.

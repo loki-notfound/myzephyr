@@ -1,10 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "myzephyr/daemon-release-target/2",
+  "$id": "myzephyr/daemon-release-target/3",
   "title": "myzephyr release set: manifest of one platform's archive",
   "description": "Written by make-release-set.py, checked by draft-release.sh. build_manifest is the verified build manifest of the binary, unchanged.",
   "type": "object",
-  "required": ["schema", "platform", "target", "version_string", "archive", "binary", "build_manifest_sha256", "build_manifest", "source", "base", "own_commit_signer_primary_fingerprint", "workflow", "run_url", "tested", "not_tested", "third_party_licenses", "source_tarballs", "manifest_name", "source_date_epoch"],
+  "required": ["schema", "platform", "target", "release", "version_string", "archive", "binary", "build_manifest_sha256", "build_manifest", "source", "base", "own_commit_signer_primary_fingerprint", "workflow", "run_url", "tested", "not_tested", "third_party_licenses", "copyleft", "manifest_name", "source_date_epoch"],
   "additionalProperties": false,
   "$defs": {
     "sha1": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
@@ -12,16 +12,17 @@
     "fingerprint": {"type": "string", "pattern": "^[0-9A-F]{40}$"}
   },
   "properties": {
-    "schema": {"const": "myzephyr/daemon-release-target/2"},
+    "schema": {"const": "myzephyr/daemon-release-target/3"},
     "platform": {"enum": ["linux-x86_64", "linux-aarch64", "macos-x86_64", "macos-arm64", "windows-x86_64"]},
     "target": {"enum": ["x86_64-unknown-linux-gnu", "aarch64-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-w64-mingw32"]},
+    "release": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-sec\\.[0-9]+-my\\.[0-9]+$"},
     "version_string": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+-[0-9a-f]{9}$"},
     "archive": {
       "type": "object",
       "required": ["name", "format", "top_directory", "sha256", "size", "unpacked_binary_sha256"],
       "additionalProperties": false,
       "properties": {
-        "name": {"type": "string", "pattern": "^zephyrd-v[0-9.]+-[0-9a-f]{9}-[a-z0-9_-]+\\.(tar\\.gz|zip)$"},
+        "name": {"type": "string", "pattern": "^zephyrd-v[0-9.]+-sec\\.[0-9]+-my\\.[0-9]+-[a-z0-9_-]+\\.(tar\\.gz|zip)$"},
         "format": {"enum": ["tar.gz", "zip"]},
         "top_directory": {"type": "string", "minLength": 1},
         "sha256": {"$ref": "#/$defs/sha256"},
@@ -94,26 +95,24 @@
         }
       }
     },
-    "source_tarballs": {
-      "description": "Depends source tarballs published next to the archive (same bytes as the build fetched and hash-checked), for the packages the owner decided to publish the source of.",
+    "copyleft": {
+      "description": "Copyleft depends packages linked into the binary, with the source pinned in contrib/depends/packages/<package>.mk.",
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["package", "name", "owner", "file", "sha256", "size", "pinned_sha256", "licence_text"],
+        "required": ["package", "name", "version", "licence", "url", "pinned_sha256"],
         "additionalProperties": false,
         "properties": {
           "package": {"type": "string", "pattern": "^[a-z0-9_+-]+$"},
           "name": {"type": "string", "minLength": 1},
-          "owner": {"type": "string", "pattern": "^depends:"},
-          "file": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
-          "sha256": {"$ref": "#/$defs/sha256"},
-          "size": {"type": "integer", "minimum": 1},
-          "pinned_sha256": {"$ref": "#/$defs/sha256"},
-          "licence_text": {"type": "string", "pattern": "^THIRD-PARTY-LICENSES/"}
+          "version": {"type": "string", "minLength": 1},
+          "licence": {"type": "string", "minLength": 1},
+          "url": {"type": "string", "pattern": "^https://"},
+          "pinned_sha256": {"$ref": "#/$defs/sha256"}
         }
       }
     },
-    "manifest_name": {"type": "string", "pattern": "^zephyrd-v[0-9.]+-[0-9a-f]{9}-[a-z0-9_-]+\\.manifest\\.json$"},
+    "manifest_name": {"type": "string", "pattern": "^zephyrd-v[0-9.]+-sec\\.[0-9]+-my\\.[0-9]+-[a-z0-9_-]+\\.manifest\\.json$"},
     "source_date_epoch": {"type": "integer"}
   },
   "allOf": [

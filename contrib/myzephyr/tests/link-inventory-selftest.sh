@@ -32,11 +32,8 @@
 # without a statement is an informational "statement ... none" row, not unresolved, and no text
 # is supplied for it, also when no file of its directory states anything and when other files
 # of the directory do; blockers stay: a depends source without a licence file at its top.
-# Source tarballs (readline, libusb, zeromq): a used depends package of that name has its
-# stamped source tarball copied to depends-sources/ with a "source-tarball" row; missing from
-# the cache or not the stamped hash: not copied, unresolved; in the cache but not linked: no
-# row, nothing copied; "dep" gets none. link-sources.py: BSD archive members padded with
-# newlines match their objects; pe-timestamp and diff-ranges on crafted headers.
+# link-sources.py: BSD archive members padded with newlines match their objects; pe-timestamp
+# and diff-ranges on crafted headers.
 set -euo pipefail
 export LC_ALL=C
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -119,7 +116,6 @@ has "$w" "^status\trelink_identical\t-\t-\tyes$" && has "$w" "^status\trelink_pr
 [ "$(nunres "$w")" = 0 ] && record 0 "nothing unresolved" || record 1 "nothing unresolved" "$(grep unresolved "$w/logs/link-inventory.tsv")"
 [ "$(fsha "$w/src/$B/bin/zephyrd")" = "$binsha" ] && [ -z "$(ls "$w/src/$B/bin" | grep -v '^zephyrd$')" ] && [ -z "$(ls -A "$work/tmp")" ] \
   && record 0 "bin/zephyrd untouched, no traced output left in bin/ or the temporary directory" || record 1 "bin/zephyrd untouched, no traced output left"
-! has "$w" "^source-tarball" && [ ! -e "$w/logs/depends-sources" ] && record 0 "no source tarball for a package other than readline, libusb, zeromq" || record 1 "no source tarball for dep"
 
 # re-link: a three-line link.txt (delete and re-create the object archive, then link)
 w=$work/mingwform; mkdir "$w"; make_tree "$w"; od=$w/src/$B/src/daemon/CMakeFiles/daemon.dir
@@ -237,25 +233,6 @@ printf '/* Licensed under the MIT License (synthetic) */\nint ext_c;\n' > "$w/sr
 run_li "$w"
 has "$w" "^license\tlicenses/tree/external/ext/LICENSE\ttree:external/ext\t" && ! has "$w" "tree-header" && ! has "$w" "^statement" \
   && record 0 "licence file present: the file is taken, no statement rows" || record 1 "licence file present: the file is taken"
-
-# readline, libusb, zeromq: the stamped source tarball goes with the release when linked
-for P in readline libusb zeromq; do
-  w=$work/src-$P; mkdir "$w"; make_tree "$w" "$P"; run_li "$w"
-  t=$w/src/contrib/depends/sources/$P-1.0.tar.gz
-  has "$w" "^source-tarball\tdepends-sources/$P-1\.0\.tar\.gz\tdepends:$P\t$(fsha "$t")\tdepends source=$P-1\.0\.tar\.gz source_sha256=$(fsha "$t") stamp=\.stamp_fetched-$P-$P-1\.0\.tar\.gz\.hash$" \
-    && cmp -s "$t" "$w/logs/depends-sources/$P-1.0.tar.gz" && [ "$(nunres "$w")" = 0 ] \
-    && record 0 "used depends:$P: its stamped source tarball copied unchanged, source-tarball row" || record 1 "$P source tarball copied" "$(grep -E 'source-tarball|unresolved' "$w/logs/link-inventory.tsv")"
-  w=$work/src-$P-bad; mkdir "$w"; make_tree "$w" "$P"; echo x >> "$w/src/contrib/depends/sources/$P-1.0.tar.gz"; run_li "$w"
-  ! has "$w" "^source-tarball" && [ ! -e "$w/logs/depends-sources/$P-1.0.tar.gz" ] && has "$w" "^status\tunresolved\tdepends:$P\t-\tsource $P-1.0.tar.gz missing or not the stamped hash" \
-    && record 0 "$P tarball not matching its stamp: not copied, unresolved" || record 1 "$P tarball not matching its stamp"
-  w=$work/src-$P-missing; mkdir "$w"; make_tree "$w" "$P"; rm "$w/src/contrib/depends/sources/$P-1.0.tar.gz"; run_li "$w"
-  ! has "$w" "^source-tarball" && has "$w" "^status\tunresolved\tdepends:$P\t-\tsource $P-1.0.tar.gz missing or not the stamped hash" \
-    && record 0 "$P tarball missing from the depends cache: unresolved" || record 1 "$P tarball missing from the depends cache"
-  w=$work/src-$P-unlinked; mkdir "$w"; make_tree "$w"; ( cd "$w" && mkdir "$P-1.0" && echo x > "$P-1.0/COPYING" && tar czf "src/contrib/depends/sources/$P-1.0.tar.gz" "$P-1.0" )
-  echo "$(fsha "$w/src/contrib/depends/sources/$P-1.0.tar.gz")  $P-1.0.tar.gz" > "$w/src/contrib/depends/sources/download-stamps/.stamp_fetched-$P-$P-1.0.tar.gz.hash"; run_li "$w"
-  ! has "$w" "^source-tarball" && ! has "$w" "depends:$P" && [ ! -e "$w/logs/depends-sources" ] && [ "$(nunres "$w")" = 0 ] \
-    && record 0 "$P in the depends cache but not linked: no source-tarball row, nothing copied" || record 1 "$P not linked: no tarball"
-done
 
 # link-sources.py on crafted inputs: a BSD archive with a padded member; PE timestamp; ranges
 w=$work/helpers; mkdir -p "$w/b/x/CMakeFiles/t.dir"

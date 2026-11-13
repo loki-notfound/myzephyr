@@ -59,10 +59,6 @@
 #                paraphrased or supplied. No compiled-in file of the directory found at all is
 #                unresolved.
 #    Any other missing text is an "unresolved" line, never a silent omission.
-# 5. Source tarballs that go with the release set (owner decisions 2026-11-11 and 2026-11-12:
-#    readline, libusb, zeromq): when such a depends package is a used owner, its source tarball
-#    is copied from the build's own depends source cache, after the stamped hash check, to
-#    <logs-dir>/depends-sources/ ("source-tarball" row with the hash).
 # Writes <logs-dir>/link-inventory.tsv (kind, path, owner, sha256, detail), the raw trace
 # <logs-dir>/link-trace.txt, <logs-dir>/daemon-link.txt, the trace items and their sources
 # (link-items.txt, link-sources.items.tsv, link-sources.deps.tsv). Paths are as seen in the
@@ -305,9 +301,6 @@ while IFS=$'\t' read -r it arch mem h obj source st; do
     || unresolved "$( [ "$it" = member ] && echo "$arch($mem)" || echo "$obj")" "no dependency record for this linked object; the headers it compiled in cannot be established"
 done < "$logs/link-sources.items.tsv"
 
-# depends packages whose source tarball goes with the release set (owner decision): copied from
-# the build's own hash-checked depends source cache, never downloaded again
-SOURCE_WITH_RELEASE=" readline libusb zeromq "
 declare -A done_licence
 for o in $(printf '%s\n' "${!used_owner[@]}" | sort); do
   case "$o" in
@@ -329,12 +322,6 @@ for o in $(printf '%s\n' "${!used_owner[@]}" | sort); do
           n=$((n + 1))
         done < <(tar tf "$t")
         [ "$n" -gt 0 ] || unresolved "$o" "no licence file at the top of $f"
-        case "$SOURCE_WITH_RELEASE" in *" $pkg "*)
-          mkdir -p "$logs/depends-sources"; cp "$t" "$logs/depends-sources/$f"
-          if [ "$(sha "$logs/depends-sources/$f")" = "$h" ]; then
-            row source-tarball "depends-sources/$f" "$o" "$h" "depends source=$f source_sha256=$h stamp=$(basename "$stamp")"
-          else unresolved "$o" "copy of $f does not have the stamped hash"; fi ;;
-        esac
       done < "$stamp" ;;
     deb:*)
       pkg=${o#deb:}

@@ -6,27 +6,25 @@ made by make-release-set.py. Nothing contacts GitHub; nothing here is a real rel
   draft-release-selftest.py <work-dir>      (<work-dir> must not exist)
 
 World: a checkout R with this directory's scripts, throwaway public keys in
-contrib/myzephyr/keys/ and a workflow file whose pins name them; a base commit with a tag
+contrib/myzephyr/keys/, contrib/myzephyr/RELEASE naming the release tag and a workflow file
+whose pins name them; a base commit with a tag
 signed by the throwaway base key (refs/tags/v-selftest-base), one own commit signed by the
 throwaway maintainer key ("Origin: myzephyr"), branch my/v2.3.0, the release tag
 v2.3.0-sec.2-my.1 signed by the maintainer key. The stub gh answers the run, branch,
 artifact and release queries from files and records every call.
-Cases: --dry-run creates nothing and prints the command with the files of the set; a real call
-runs gh release create --draft --verify-tag with exactly those files and notes naming the
-base, the own commit ("not yet reported"), the platforms, the verification and the run.
+Cases: --dry-run creates nothing and prints the command with the five archives and
+SHA256SUMS; a real call runs gh release create --draft --verify-tag with exactly those six
+files and notes with WHATSNEW.md, the downloads table, the verification, the run, the gate
+note and the copyleft sources (synthetic readline on Linux and macOS, libusb on Linux, zeromq
+on all five, pinned in the base commit's contrib/depends/packages/<package>.mk).
 Refused, one change each: a release exists; run event pull_request; run on another branch;
 run not successful; run built another commit; tag commit not on the branch; tag signed by
-another key; lightweight tag; GitHub digest differs; a file of the set changed (SHA256SUMS);
-manifest of another run; incomplete licences; archive binary differs from the manifest;
-artifact expired. Usage: tag name outside v*-sec.*-my.*, run id not a number, no arguments.
-Rounds 16 and 17 (owner decisions: GNU readline, libusb and ZeroMQ ship with their source):
-the base commit carries synthetic contrib/depends/packages/<package>.mk pins; the artifacts
-link synthetic depends packages as the real builds do (readline on Linux and macOS, libusb on
-Linux, zeromq on all five) and carry their synthetic source tarballs, so the set has fourteen
-files. Cases: present (fourteen files, the three tarballs among those given to gh), a platform
-that does not link a package needs no tarball of it; refused, per package: the tarball
-missing from the set, its hash not the pin (set re-hashed consistently), a manifest naming
-the package without naming the tarball.
+another key; lightweight tag; a tag other than RELEASE at the tagged commit; GitHub digest
+differs; a file of the set changed (SHA256SUMS); an extra file in the set; manifest of another
+run; incomplete licences; archive binary differs from the manifest; a copyleft source other
+than the pin; a linked copyleft package not named; the gate note empty or a placeholder;
+artifact expired. Usage: tag name outside v*-sec.*-my.*, run id not a number, no arguments, no
+--gate-note.
 """
 import hashlib
 import json
@@ -104,7 +102,11 @@ try:
     os.makedirs(os.path.join(R, "contrib", "depends", "packages"))
     for pkg in SRC:
         open(os.path.join(R, "contrib", "depends", "packages", f"{pkg}.mk"), "w").write(
-            f"package={pkg}\n$(package)_version=1\n$(package)_sha256_hash={PIN[pkg]}\n")
+            f"package={pkg}\n$(package)_version=1.0\n$(package)_download_path=https://example.invalid/{pkg}\n"
+            f"$(package)_file_name=$(package)-$($(package)_version).tar.gz\n$(package)_sha256_hash={PIN[pkg]}\n")
+    open(os.path.join(R, "contrib", "myzephyr", "RELEASE"), "w").write(TAG + "\n")
+    GATE = os.path.join(work, "gate-note.md")
+    open(GATE, "w").write("Full sync and database resume of the Linux x86_64 binary: done (synthetic gate note).\n")
 
     def G(*a, check=True):
         return run("git", "-C", R, "-c", "core.hooksPath=/dev/null", "-c", "gpg.program=gpg", "-c", "user.name=selftest",
@@ -163,15 +165,11 @@ try:
                     continue
                 lg = os.path.join(d, "build-logs")
                 os.makedirs(os.path.join(lg, "licenses", "depends", pkg))
-                os.makedirs(os.path.join(lg, "depends-sources"), exist_ok=True)
                 open(os.path.join(lg, "licenses", "depends", pkg, lname), "w").write(f"synthetic {pkg} licence\n")
-                open(os.path.join(lg, "depends-sources", fname), "wb").write(TB[pkg])
                 top = fname.split(".tar.")[0]
                 inv += (f"input\t/src/contrib/depends/{target}/lib/lib{pkg}.a\tdepends:{pkg}\t{'1' * 64}\tused members=1\n"
                         f"license\tlicenses/depends/{pkg}/{lname}\tdepends:{pkg}\t{sha(os.path.join(lg, 'licenses', 'depends', pkg, lname))}"
-                        f"\tdepends source={fname} source_sha256={PIN[pkg]} member={top}/{lname}\n"
-                        f"source-tarball\tdepends-sources/{fname}\tdepends:{pkg}\t{PIN[pkg]}"
-                        f"\tdepends source={fname} source_sha256={PIN[pkg]} stamp=x\n")
+                        f"\tdepends source={fname} source_sha256={PIN[pkg]} member={top}/{lname}\n")
             open(os.path.join(d, "build-logs", "link-inventory.tsv"), "w").write(inv)
             m = {"artifact": {"name": binary, "target": target, "expected_version": version,
                               "sha256": sha(os.path.join(d, binary)), "size": os.path.getsize(os.path.join(d, binary))},
@@ -256,7 +254,7 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
         json.dump({"commit": {"sha": G("rev-parse", BRANCH)}}, open(os.path.join(d, "branch.json"), "w"))
         env = dict(ENV, PATH=stub_bin + os.pathsep + ENV["PATH"], GH_STUB=os.path.join(d, "gh.json"), MYZ_ORIGIN_URL=f"file://{origin}")
         p = run("bash", os.path.join(R, "contrib", "myzephyr", "release", "draft-release.sh"), "--repo", REPO,
-                "--workdir", os.path.join(d, "w"), *(args if args is not None else [TAG, RUN]), env=env, check=False)
+                "--workdir", os.path.join(d, "w"), *(args if args is not None else ["--gate-note", GATE, TAG, RUN]), env=env, check=False)
         out = p.stdout + p.stderr
         calls = [json.loads(l) for l in open(cfg["log"])] if os.path.exists(cfg["log"]) else []
         creates = [c for c in calls if c[:2] == ["release", "create"]]
@@ -267,29 +265,27 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
         return p, out, creates, cfg["log"]
 
     # positive
-    p, out, creates, log = scenario("dry run prints the command, creates nothing", args=["--dry-run", TAG, RUN], frag="dry run, nothing created")
+    p, out, creates, log = scenario("dry run prints the command, creates nothing", args=["--dry-run", "--gate-note", GATE, TAG, RUN],
+                                    frag="dry run, nothing created")
     files = [l.strip() for l in out.splitlines() if l.startswith("  ")]
-    record("dry run lists fourteen flat files (5 archives, 5 manifests, the three source tarballs, SHA256SUMS last)",
-           len(files) == 14 and files[-1] == "SHA256SUMS" and all(v[0] in files for v in SRC.values())
-           and sum(f.endswith(".manifest.json") for f in files) == len(PLAT) and not creates, files)
-    for plat in PLAT:
-        pman = json.load(open(os.path.join(good_set, next(n for n in os.listdir(good_set) if n.endswith(f"{plat}.manifest.json")))))
-        linked = sorted(pkg for pkg, v in SRC.items() if plat in v[2])
-        record(f"{plat}: its manifest names the source tarballs of exactly {', '.join(linked)} (no tarball for a package it does not link); accepted",
-               sorted(t["package"] for t in pman["source_tarballs"]) == linked and "dry run, nothing created" in out)
+    record("dry run lists six flat files (the five archives, SHA256SUMS last)",
+           len(files) == 6 and files[-1] == "SHA256SUMS" and all(f.startswith(f"zephyrd-{TAG}-") for f in files[:5]) and not creates, files)
     record("dry run prints gh release create --draft --verify-tag", "gh release create" in out and "--draft --verify-tag" in out)
     p, out, creates, log = scenario("real call creates the draft", frag="draft created")
     c = creates[0] if creates else []
-    record("gh release create with --draft --verify-tag and exactly the fourteen files, the three tarballs among them", len(creates) == 1
+    record("gh release create with --draft --verify-tag and exactly the six files", len(creates) == 1
            and "--draft" in c and "--verify-tag" in c and "--title" in c
-           and sum(1 for x in c if os.path.isfile(x) and not x.endswith("notes.md")) == 14
-           and all(any(x.endswith("/" + v[0]) for x in c) for v in SRC.values()), c)
+           and sorted(os.path.basename(x) for x in c if os.path.isfile(x) and not x.endswith("notes.md")) == sorted(files), c)
     notes = open(log + ".notes").read() if os.path.exists(log + ".notes") else ""
-    record("notes: base, own commit not yet reported, platforms, verification, run, owner statement placeholder",
-           all(x in notes for x in ("v-selftest-base", "Add the own change (upstream report: not yet reported)", "windows-x86_64",
-                                    "gpg --verify SHA256SUMS.asc` (the clear-signed", RUN_URL, "TO BE STATED BY THE OWNER",
-                                    "`readline-8.0.tar.gz` is the source of GNU readline", "`libusb-1.0.27.tar.bz2` is the source of libusb",
-                                    "`zeromq-4.3.5.tar.gz` is the source of ZeroMQ (libzmq)")), notes[:400])
+    whatsnew = open(os.path.join(R, "contrib", "myzephyr", "release", "WHATSNEW.md")).read().strip()
+    record("notes: what it is (WHATSNEW.md), downloads, verification, run, gate note, copyleft sources; no placeholder",
+           all(x in notes for x in ("## What it is", whatsnew, "without hardware-wallet support", "## Downloads",
+                                    f"`zephyrd-{TAG}-windows-x86_64.zip`", f"`gpg --verify SHA256SUMS.asc` (my key: `{MAINT}`)",
+                                    f"`git verify-tag {TAG}`", RUN_URL, "## Tested", "(synthetic gate note)", "## Licences and sources",
+                                    "| GNU readline 1.0 (synthetic readline licence) | Linux, macOS | https://example.invalid/readline/readline-1.0.tar.gz |",
+                                    "| libusb 1.0 (synthetic libusb licence) | Linux |",
+                                    "| ZeroMQ 1.0 (synthetic zeromq licence) | all |"))
+           and "TO BE" not in notes and "manifest" not in notes, notes[:600])
     record("never publishes and never signs", not any("--draft=false" in x or x == "edit" for cc in creates for x in cc))
 
     # refusals
@@ -316,6 +312,12 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
     scenario("tag signed by another key", setup=retag("tag", "-s", "-u", OTHER, "-m", TAG, TAG, C), want_exit=1, frag="signature does not verify")
     scenario("lightweight tag", setup=retag("-c", "tag.gpgsign=false", "tag", TAG, C), want_exit=1, frag="is not an annotated tag")
     retag("tag", "-s", "-u", MAINT, "-m", TAG, TAG, C)()
+
+    def other_tag():
+        G("tag", "-s", "-u", MAINT, "-m", "v2.3.0-sec.2-my.3", "v2.3.0-sec.2-my.3", C)
+        run("git", "-C", origin, "fetch", "-q", R, "+refs/tags/v2.3.0-sec.2-my.3:refs/tags/v2.3.0-sec.2-my.3")
+    scenario("a tag other than RELEASE at the tagged commit", setup=other_tag, args=["--gate-note", GATE, "v2.3.0-sec.2-my.3", RUN],
+             want_exit=1, frag="contrib/myzephyr/RELEASE at")
     scenario("artifact digest differs from GitHub's", digest="1" * 64, want_exit=1, frag="does not match GitHub's digest")
     scenario("artifact expired", expired=True, want_exit=1, frag="not available with a digest")
 
@@ -339,9 +341,6 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
     m["binary"]["sha256"] = "2" * 64
     m["build_manifest"]["artifact"]["sha256"] = "2" * 64
     json.dump(m, open(os.path.join(swapped, mfile), "w"), indent=2, sort_keys=True)
-    lines = [l for l in open(os.path.join(swapped, "SHA256SUMS")).read().splitlines() if not l.endswith(mfile)]
-    lines.append(f"{sha(os.path.join(swapped, mfile))}  {mfile}")
-    open(os.path.join(swapped, "SHA256SUMS"), "w").write("\n".join(sorted(lines, key=lambda l: l.split('  ')[1])) + "\n")
     scenario("archive binary differs from the manifest", set_dir=swapped, want_exit=1, frag="does not unpack to the named binary")
 
     def resum(setdir, changed):
@@ -349,39 +348,36 @@ sys.stderr.write("stub gh: unexpected call\\n"); sys.exit(1)
         lines += [f"{sha(os.path.join(setdir, n))}  {n}" for n in changed if os.path.exists(os.path.join(setdir, n))]
         open(os.path.join(setdir, "SHA256SUMS"), "w").write("\n".join(sorted(lines, key=lambda l: l.split('  ')[1])) + "\n")
 
-    for pkg, (fname, _, plats, _) in SRC.items():
-        missing = os.path.join(work, f"no-{pkg}-tarball-set")
-        shutil.copytree(good_set, missing)
-        os.remove(os.path.join(missing, fname))
-        resum(missing, [fname])
-        scenario(f"{pkg} source tarball missing from the set", set_dir=missing, want_exit=1, frag=f"source tarball {fname} missing from the set")
-        bad = os.path.join(work, f"{pkg}-not-pin-set")
-        shutil.copytree(good_set, bad)
-        open(os.path.join(bad, fname), "wb").write(b"other bytes\n")
-        hb = sha(os.path.join(bad, fname))
-        mfiles = [n for n in os.listdir(bad) if n.endswith(".manifest.json")]
-        for n in mfiles:
-            mm = json.load(open(os.path.join(bad, n)))
-            for t in mm["source_tarballs"]:
-                if t["package"] == pkg:
-                    t["sha256"] = hb
-                    t["size"] = os.path.getsize(os.path.join(bad, fname))
-            json.dump(mm, open(os.path.join(bad, n), "w"), indent=2, sort_keys=True)
-        resum(bad, [fname] + mfiles)
-        scenario(f"{pkg} source tarball hash is not the pin", set_dir=bad, want_exit=1, frag=f"the pin in the checkout is {PIN[pkg]}")
-        unnamed = os.path.join(work, f"{pkg}-unnamed-set")
-        shutil.copytree(good_set, unnamed)
-        mf = next(n for n in os.listdir(unnamed) if n.endswith(f"{plats[-1]}.manifest.json"))
-        mm = json.load(open(os.path.join(unnamed, mf)))
-        mm["source_tarballs"] = [t for t in mm["source_tarballs"] if t["package"] != pkg]
-        json.dump(mm, open(os.path.join(unnamed, mf), "w"), indent=2, sort_keys=True)
-        resum(unnamed, [mf])
-        scenario(f"manifest names {pkg} but no source tarball", set_dir=unnamed, want_exit=1, frag=f"names depends:{pkg} but the manifest names no source tarball of it")
+    extra = os.path.join(work, "extra-file-set")
+    shutil.copytree(good_set, extra)
+    open(os.path.join(extra, "zeromq-4.3.5.tar.gz"), "wb").write(TB["zeromq"])
+    resum(extra, ["zeromq-4.3.5.tar.gz"])
+    scenario("an extra file in the set, listed in SHA256SUMS", set_dir=extra, want_exit=1, frag="expected exactly the five archives")
+
+    def edit_manifest(name, plat, fn):
+        dset = os.path.join(work, name)
+        shutil.copytree(good_set, dset)
+        mf = next(n for n in os.listdir(dset) if n.endswith(f"{plat}.manifest.json"))
+        mm = json.load(open(os.path.join(dset, mf)))
+        fn(mm)
+        json.dump(mm, open(os.path.join(dset, mf), "w"), indent=2, sort_keys=True)
+        return dset
+    scenario("a copyleft source other than the pin", want_exit=1, frag="the checkout pins",
+             set_dir=edit_manifest("copyleft-not-pin-set", "macos-arm64",
+                                   lambda mm: [c.__setitem__("pinned_sha256", "3" * 64) for c in mm["copyleft"] if c["package"] == "zeromq"]))
+    scenario("a linked copyleft package not named", want_exit=1, frag="does not match the linked packages",
+             set_dir=edit_manifest("copyleft-unnamed-set", "linux-aarch64",
+                                   lambda mm: mm.__setitem__("copyleft", [c for c in mm["copyleft"] if c["package"] != "libusb"])))
+    for what, content in (("empty", "\n"), ("a placeholder", "Full sync: TO BE STATED BY THE OWNER\n")):
+        bad_gate = os.path.join(work, f"gate-{what.replace(' ', '-')}.md")
+        open(bad_gate, "w").write(content)
+        scenario(f"gate note {what}", args=["--gate-note", bad_gate, TAG, RUN], want_exit=1, frag="the gate note is empty or holds a placeholder")
 
     # usage
-    scenario("tag name outside v*-sec.*-my.*", args=["v2.3.0-sec.2", RUN], want_exit=2, frag="does not match")
-    scenario("run id not a number", args=[TAG, "latest"], want_exit=2, frag="is not a number")
+    scenario("tag name outside v*-sec.*-my.*", args=["--gate-note", GATE, "v2.3.0-sec.2", RUN], want_exit=2, frag="does not match")
+    scenario("run id not a number", args=["--gate-note", GATE, TAG, "latest"], want_exit=2, frag="is not a number")
     scenario("no arguments", args=[], want_exit=2, frag="usage:")
+    scenario("no --gate-note", args=[TAG, RUN], want_exit=2, frag="--gate-note FILE is required")
 finally:
     subprocess.run(["gpgconf", "--homedir", gh_home, "--kill", "all"], capture_output=True)
     shutil.rmtree(gh_home, ignore_errors=True)

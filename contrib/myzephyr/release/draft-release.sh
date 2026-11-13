@@ -3,10 +3,12 @@
 # the owner (or by the reviewer on the owner's word); never in CI. It never publishes and
 # never signs anything.
 #
-#   draft-release.sh [--dry-run] [--repo OWNER/NAME] [--branch BRANCH] [--reports FILE]
-#                    [--workdir DIR] <tag> <run-id>
-#   defaults: --repo loki-notfound/myzephyr, --branch my/v2.3.0, --workdir a new temporary
-#   directory (must not exist when given). Needs gh (authenticated), git, gpg, python3.
+#   draft-release.sh [--dry-run] [--repo OWNER/NAME] [--branch BRANCH] [--workdir DIR]
+#                    --gate-note FILE <tag> <run-id>
+#   --gate-note (required): Markdown sentences on the full sync and the database resume of
+#   the Linux x86_64 binary; they go into the notes as written. Defaults: --repo
+#   loki-notfound/myzephyr, --branch my/v2.3.0, --workdir a new temporary directory (must not
+#   exist when given). Needs gh (authenticated), git, gpg, python3.
 #
 # Pinned values (base repository, tag, tag object, commit, fingerprints) are read from the
 # workflow file of the checkout this script lives in; keys and verify-source.sh are that
@@ -20,13 +22,15 @@
 #     ancestor of it (and the branch head equals what the API says). verify-source.sh
 #     --release-tag <tag> on the clean checkout of that commit: base tag and signature, every
 #     own commit, exactly this annotated tag at HEAD, signed by the pinned maintainer key.
+#     contrib/myzephyr/RELEASE at that commit is exactly <tag>.
 #  4. The artifact release-set-<commit> of that run: not expired; its zip is downloaded and
-#     must have GitHub's recorded digest; then check-release-set.py: SHA256SUMS, every
-#     manifest (commit, run and attempt, version string without "release", complete
-#     licences), every archive unpacks to the named binary, and the source tarballs of GNU
-#     readline, libusb and ZeroMQ are present with the pinned hash (of the verified clone's
-#     recipe) wherever a manifest's licence list names the package. It writes the release notes.
-#  5. gh release create <tag> --draft --verify-tag with exactly the flat files of the set
+#     must have GitHub's recorded digest; then check-release-set.py: SHA256SUMS over the five
+#     archives, every manifest (release <tag>, commit, run and attempt, version string without
+#     "release", complete licences, copyleft sources as pinned in the verified clone), every
+#     archive unpacks to the named binary. It writes the notes from the clone's
+#     contrib/myzephyr/release/WHATSNEW.md and the gate note, refusing either if empty or a
+#     placeholder.
+#  5. gh release create <tag> --draft --verify-tag with the five archives and SHA256SUMS
 #     (a quoted array) and the notes. With --dry-run everything except this step runs, and the
 #     exact command and file list are printed.
 # Exit 1 on any refusal, 2 on a usage error. MYZ_ORIGIN_URL replaces the clone source
@@ -36,15 +40,15 @@ export LC_ALL=C
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tools=$(dirname "$here")
 top=$(dirname "$(dirname "$tools")")
-usage() { echo "usage: draft-release.sh [--dry-run] [--repo OWNER/NAME] [--branch BRANCH] [--reports FILE] [--workdir DIR] <tag> <run-id>" >&2; exit 2; }
+usage() { echo "usage: draft-release.sh [--dry-run] [--repo OWNER/NAME] [--branch BRANCH] [--workdir DIR] --gate-note FILE <tag> <run-id>" >&2; exit 2; }
 refuse() { echo "draft-release: refused: $*" >&2; exit 1; }
 
-dry=0 repo=loki-notfound/myzephyr branch=my/v2.3.0 reports= workdir= pos=()
+dry=0 repo=loki-notfound/myzephyr branch=my/v2.3.0 gate= workdir= pos=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1; shift ;;
-    --repo|--branch|--reports|--workdir) [ $# -ge 2 ] || usage; v=$2
-      case "$1" in --repo) repo=$v ;; --branch) branch=$v ;; --reports) reports=$v ;; --workdir) workdir=$v ;; esac; shift 2 ;;
+    --repo|--branch|--gate-note|--workdir) [ $# -ge 2 ] || usage; v=$2
+      case "$1" in --repo) repo=$v ;; --branch) branch=$v ;; --gate-note) gate=$v ;; --workdir) workdir=$v ;; esac; shift 2 ;;
     -*) usage ;;
     *) pos+=("$1"); shift ;;
   esac
@@ -55,7 +59,8 @@ tag=${pos[0]} run=${pos[1]}
 [[ "$run" =~ ^[1-9][0-9]*$ ]] || { echo "draft-release: run id $run is not a number" >&2; exit 2; }
 [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "draft-release: --repo $repo is not OWNER/NAME" >&2; exit 2; }
 [[ "$branch" =~ ^my/[A-Za-z0-9._/-]+$ ]] || { echo "draft-release: --branch $branch is not under my/" >&2; exit 2; }
-[ -z "$reports" ] || [ -r "$reports" ] || { echo "draft-release: --reports $reports not readable" >&2; exit 2; }
+[ -n "$gate" ] && [ -f "$gate" ] && [ -r "$gate" ] || { echo "draft-release: --gate-note FILE is required and must be readable" >&2; exit 2; }
+gate=$(cd "$(dirname "$gate")" && pwd)/$(basename "$gate")
 for t in gh git gpg python3; do command -v "$t" > /dev/null || refuse "$t not found"; done
 PY=python3
 
@@ -110,6 +115,7 @@ bash "$tools/verify-source.sh" --checkout "$clone" --expected-head "$tag_commit"
   --base-key "$tools/keys/zephyr-backports-release.asc" --base-fingerprint "$BASE_FINGERPRINT" \
   --maintainer-key "$tools/keys/myzephyr-maintainer.asc" --maintainer-fingerprint "$MAINTAINER_FINGERPRINT" \
   --release-tag "$tag" --out "$workdir/source-identity.txt" || refuse "source or tag verification failed"
+[ "$(g show "$tag_commit:contrib/myzephyr/RELEASE" 2> /dev/null)" = "$tag" ] || refuse "contrib/myzephyr/RELEASE at $tag_commit is not $tag"
 
 # 4. the release set
 gh api "repos/$repo/actions/runs/$run/artifacts?per_page=100" > "$workdir/artifacts.json" || refuse "cannot list the run's artifacts"
@@ -136,7 +142,7 @@ for n in z.namelist():
 z.extractall(sys.argv[2])' "$workdir/release-set.zip" "$workdir/set" || refuse "release set is not a flat set of files"
 files_list=$("$PY" -I "$here/check-release-set.py" --dir "$workdir/set" --checkout "$clone" --commit "$tag_commit" --repository "$repo" \
   --ref "refs/heads/$branch" --run-id "$run" --run-attempt "$attempt" --run-url "$run_url" --tag "$tag" \
-  --notes "$workdir/notes.md" ${reports:+--reports "$reports"}) || refuse "release set check failed"
+  --gate-note "$gate" --notes "$workdir/notes.md") || refuse "release set check failed"
 files=()
 while IFS= read -r f; do files+=("$workdir/set/$f"); done <<< "$files_list"
 

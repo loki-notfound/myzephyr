@@ -40,10 +40,11 @@
 #                     binary format (for macOS arm64 also its ad-hoc code signature) and
 #                     embedded strings, manifest (nothing is executed)
 #   package           needs every job above: downloads and verifies the five artifacts again,
-#                     packs one archive per platform (binary, LICENSE, THIRD-PARTY-LICENSES from
-#                     the build's link inventory, README.txt), a manifest per platform and
-#                     SHA256SUMS (contrib/myzephyr/release/make-release-set.py) and uploads
-#                     them as the release set (90 days on pushes to my/**); on a push it also
+#                     packs one archive per platform named after contrib/myzephyr/RELEASE
+#                     (binary, LICENSE, THIRD-PARTY-LICENSES from the build's link inventory,
+#                     README.txt), SHA256SUMS over the five archives and a manifest per platform
+#                     (contrib/myzephyr/release/make-release-set.py) and uploads them as the
+#                     release set (90 days on pushes to my/**); on a push it also
 #                     reports the binary hashes of the pull-request run of the same commit
 #   native-runtime    each cross artifact on a hosted runner of its platform
 #                     (ubuntu-24.04-arm, macos-15-intel, macos-26 on Apple Silicon,

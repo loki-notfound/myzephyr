@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make the release set of one run: an archive per platform, a manifest per platform, SHA256SUMS.
+"""Make the release set of one run: an archive per platform, SHA256SUMS, a manifest per platform.
 
   make-release-set.py --checkout DIR --out DIR --run-url URL
       --artifact linux-x86_64=DIR --artifact linux-aarch64=DIR
@@ -12,14 +12,21 @@ other and with the other targets (one commit, one version string, one run, one b
 --checkout is the job's own verified checkout of that commit (LICENSE, depends recipes,
 own commit subjects).
 
-Archive per platform, fixed layout, named by the version string (the tag does not exist yet):
-  zephyrd-<version string>-<platform>/
+The release name is the one line of contrib/myzephyr/RELEASE in the checkout (the release
+this commit line prepares, e.g. v2.3.0-sec.2-my.2); the binaries still report
+v<version>-<9 hex of the commit>, since builds never see a tag.
+Archive per platform, fixed layout:
+  zephyrd-<release>-<platform>/
     zephyrd | zephyrd.exe          the verified binary, mode 0755
     LICENSE                        the tree's LICENSE
     THIRD-PARTY-LICENSES/          the licence texts of everything linked into that binary,
                                    from its link inventory (link-inventory.sh in the build),
                                    with INDEX.txt naming owner, source file and hashes
-    README.txt                     generated from the per-platform manifest
+    README.txt                     short, first person: what it is, verification, replacing
+                                   an upstream zephyrd, what this run tested, and for each
+                                   copyleft library linked in (COPYLEFT) its version, licence
+                                   (as its text names it), upstream URL and pinned SHA256
+                                   from contrib/depends/packages/<name>.mk
   .tar.gz for Linux and macOS: GNU tar --format=gnu --sort=name --mtime=@SOURCE_DATE_EPOCH
   --owner=0 --group=0 --numeric-owner --mode=u+rwX,go+rX,go-w, then gzip -n -9 (no name, no
   time); .zip for Windows with SOURCE_DATE_EPOCH as every entry's time, sorted entries and
@@ -30,23 +37,15 @@ manifest names, the traced re-link was identical, nothing is unresolved, every u
 ("compiled" rows) and of compiled-in headers) has a licence text, and every depends source hash
 equals the pin in the checkout's contrib/depends/packages/*.mk; otherwise "incomplete" with
 the reasons, in the manifest and README. A compiled-in file without a licence statement
-("statement ... none" row of the inventory) is shipped as upstream ships it (owner decision
-2026-11-12): it does not block, and a source directory whose every compiled-in file is such a
-file does not count as an owner without a text; neither is mentioned in the archive, the
-README or the manifest (the build's link-inventory.tsv keeps the fact). draft-release.sh
-refuses an incomplete set; this script still writes it, so every run shows the list for review. INDEX.txt notes, for a text
-from a source header that names a licence file (e.g. "accompanying file LICENSE_1_0.txt"),
-where a text of that file name is in the same archive.
-Source tarballs (SOURCE_WITH_RELEASE, owner decisions: GNU readline, libusb, ZeroMQ): for every
-platform whose inventory has such a package as a used owner, the build artifact must carry the tarball its
-link inventory copied from the build's own depends source cache ("source-tarball" row,
-build-logs/depends-sources/<file>); its hash must equal the row, the stamped source hash of
-the package's licence texts and the pin in the checkout's recipe. It is added to the set as a
-flat file (same bytes for every platform), listed in SHA256SUMS, in the manifests of the
-platforms that link it ("source_tarballs") and in their README.txt. Missing or different:
-exit 1 (never skipped).
-Per-platform manifest zephyrd-<version string>-<platform>.manifest.json
-(release-target.schema.json). SHA256SUMS lists the archives and the manifests, never itself.
+("statement ... none" row of the inventory) does not block, and a source directory whose
+every compiled-in file is such a file does not count as an owner without a text (owner
+decision 2026-11-12); the build's link-inventory.tsv keeps the fact. draft-release.sh
+refuses an incomplete set; this script still writes it, so every run shows the list for
+review. INDEX.txt notes, for a text from a source header that names a licence file (e.g.
+"accompanying file LICENSE_1_0.txt"), where a text of that file name is in the same archive.
+SHA256SUMS lists exactly the five archives: they and its signature are the release assets.
+Per-platform manifest zephyrd-<release>-<platform>.manifest.json (release-target.schema.json):
+the input of check-release-set.py and a run artifact, not a release asset.
 After writing, every archive is unpacked again and must yield exactly the layout and the
 binary whose hash the build manifest names. Exit 1 on any inconsistency.
 """
@@ -64,12 +63,17 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 import zipfile
 
-SCHEMA = "myzephyr/daemon-release-target/2"
-# depends packages whose source tarball goes with the release set (owner decisions 2026-11-11 and
-# 2026-11-12), with the name README.txt uses
-SOURCE_WITH_RELEASE = {"readline": "GNU readline", "libusb": "libusb", "zeromq": "ZeroMQ (libzmq)"}
+SCHEMA = "myzephyr/daemon-release-target/3"
+RELEASE_RE = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+-sec\.[0-9]+-my\.[0-9]+")
+# depends packages under a copyleft licence: README.txt and the notes name their sources
+COPYLEFT = {"readline": "GNU readline", "libusb": "libusb", "zeromq": "ZeroMQ"}
+BUILD_NOTE = ("I build it without hardware-wallet support and without the wallet fast-path assembly; "
+              "a daemon uses neither.")
+LABEL = {"linux-x86_64": "Linux x86_64", "linux-aarch64": "Linux AArch64", "macos-x86_64": "macOS x86_64 (Intel)",
+         "macos-arm64": "macOS arm64 (Apple Silicon)", "windows-x86_64": "Windows x86_64"}
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.dont_write_bytecode = True
 _spec = importlib.util.spec_from_file_location("verify_artifact", os.path.join(os.path.dirname(HERE), "verify-artifact.py"))
@@ -92,45 +96,43 @@ PLATFORMS = {  # platform: (target, binary, archive format)
 # what this run proved per platform: the jobs the package job needs, all of which succeeded
 TESTED = {
     "linux-x86_64": [
-        "built in the pinned Debian 11 builder (GCC 9; glibc symbol versions at most 2.29, no RPATH, no shared C++ runtime)",
-        "unit tests built from the same commit: all enabled tests passed (reference count) on ubuntu-24.04",
-        "--version and a strict offline start with clean shutdown on ubuntu-24.04 and in the Debian 11 builder userland (glibc 2.31)",
-        "default public peer discovery from an empty data directory on ubuntu-24.04 (handshake and validated height increase)",
+        "built in the pinned Debian 11 builder (GCC 9, glibc symbols at most 2.29, no RPATH)",
+        "unit tests of the same commit: all passed, on Ubuntu 24.04",
+        "--version and an offline start with clean shutdown on Ubuntu 24.04 and in Debian 11 (glibc 2.31)",
+        "finding peers from an empty data directory on Ubuntu 24.04",
     ],
     "linux-aarch64": [
-        "cross-built in the pinned builder (GCC 9; glibc symbol versions at most 2.29)",
-        "on ubuntu-24.04-arm: --version, a strict offline start with clean shutdown and default public peer discovery",
-        "a strict offline start in a runtime-only Debian 11 arm64 userland (glibc 2.31)",
+        "cross-built in the pinned builder (GCC 9, glibc symbols at most 2.29)",
+        "--version, an offline start with clean shutdown and finding peers on Ubuntu 24.04 (ARM)",
+        "an offline start in Debian 11 arm64 (glibc 2.31)",
     ],
     "macos-x86_64": [
-        "cross-built in the pinned builder (minimum macOS 10.13, thin x86_64)",
-        "on macos-15-intel: --version, a strict offline start with clean shutdown and default public peer discovery",
+        "cross-built in the pinned builder (thin x86_64, minimum macOS 10.13)",
+        "--version, an offline start with clean shutdown and finding peers on macOS 15 (Intel)",
     ],
     "macos-arm64": [
-        "cross-built in the pinned builder (thin arm64, minimum macOS 10.13 in the binary; ad-hoc code signature by the linker)",
-        "on macos-26 (Apple Silicon): --version, a strict offline start with clean shutdown and default public peer discovery",
+        "cross-built in the pinned builder (thin arm64, ad-hoc signature by the linker)",
+        "--version, an offline start with clean shutdown and finding peers on macOS 26 (Apple Silicon)",
     ],
     "windows-x86_64": [
         "cross-built in the pinned builder (MinGW-w64, no MinGW runtime DLL)",
-        "on windows-2022: --version, a strict offline start with clean shutdown and default public peer discovery",
+        "--version, an offline start with clean shutdown and finding peers on Windows Server 2022",
     ],
 }
 NOT_TESTED = {
-    "linux-x86_64": "other Linux distributions than the two userlands above",
+    "linux-x86_64": "other Linux distributions",
     "linux-aarch64": "other AArch64 distributions",
-    "macos-x86_64": "macOS 10.13 to 14 and Apple Silicon (Rosetta)",
-    "macos-arm64": "macOS 11 to 15 (Apple Silicon Macs start at macOS 11)",
-    "windows-x86_64": "Windows 10 and other Windows Server versions",
+    "macos-x86_64": "macOS 10.13 to 14, and Rosetta on Apple Silicon",
+    "macos-arm64": "macOS 11 to 15",
+    "windows-x86_64": "Windows 10 and 11, other Windows Server versions",
 }
+QUARANTINE = "After checking the hashes, remove the quarantine flag a browser download sets: xattr -d com.apple.quarantine zephyrd"
 REPLACE_NOTE = {
     "linux-x86_64": None, "linux-aarch64": None,
-    "macos-x86_64": ("macOS: the binary is not notarized by Apple. After checking the hashes, remove the quarantine "
-                     "attribute that a browser download sets: xattr -d com.apple.quarantine zephyrd"),
-    "macos-arm64": ("macOS: the binary carries only the ad-hoc signature the linker writes and is not notarized by Apple. "
-                    "After checking the hashes, remove the quarantine attribute that a browser download sets: "
-                    "xattr -d com.apple.quarantine zephyrd"),
-    "windows-x86_64": ("Windows: zephyrd.exe is not Authenticode-signed, like upstream's own builds; SmartScreen may "
-                       "warn. After checking the hashes, unblock it (file Properties, Unblock) or choose More info, Run anyway."),
+    "macos-x86_64": "The binary is not notarized by Apple. " + QUARANTINE,
+    "macos-arm64": "The binary carries only the linker's ad-hoc signature and is not notarized by Apple. " + QUARANTINE,
+    "windows-x86_64": ("zephyrd.exe is not Authenticode-signed, like upstream's builds, so SmartScreen may warn. "
+                       "After checking the hashes, unblock it (Properties, Unblock)."),
 }
 
 
@@ -265,81 +267,72 @@ def licences(platform, art, manifest, checkout, stage):
     return status, entries, reasons
 
 
-def source_tarballs(platform, art, checkout, entries):
-    """[(package, file, path in the artifact, sha256)] of the source tarballs this platform must carry; exit 1 if missing."""
-    logs = os.path.join(art, "build-logs")
-    rows = read_inventory(os.path.join(logs, "link-inventory.tsv")) if os.path.isfile(os.path.join(logs, "link-inventory.tsv")) else []
-    owners = {r["owner"] for r in rows if (r["kind"] == "input" and r["detail"].startswith("used")) or r["kind"] == "compiled"}
+def depends_source(checkout, pkg):
+    """(version, URL, pinned SHA256) of contrib/depends/packages/<pkg>.mk, or None if not all three are found."""
+    p = os.path.join(checkout, "contrib", "depends", "packages", f"{pkg}.mk")
+    if not os.path.isfile(p):
+        return None
+    var = dict(re.findall(r"^\$\(package\)_(version|download_path|file_name|sha256_hash)=(\S+)\s*$", open(p, encoding="utf-8").read(), re.M))
+    if sorted(var) != ["download_path", "file_name", "sha256_hash", "version"] or not re.fullmatch(r"[0-9a-f]{64}", var["sha256_hash"]):
+        return None
+    expand = lambda v: v.replace("$($(package)_version)", var["version"]).replace("$(package)", pkg)
+    url = expand(var["download_path"]).rstrip("/") + "/" + expand(var["file_name"])
+    return None if "$" in url + var["version"] else (var["version"], url, var["sha256_hash"])
+
+
+def licence_name(path):
+    """The licence as its text names it: the first non-empty line, with a following "Version ..." line."""
+    lines = [l.strip() for l in open(path, encoding="utf-8", errors="replace").read().splitlines() if l.strip()]
+    if not lines:
+        return None
+    return lines[0] + (" " + lines[1] if len(lines) > 1 and lines[1].startswith("Version") else "")
+
+
+def copyleft(platform, entries, checkout, stage):
+    """[{package, name, version, licence, url, pinned_sha256}] of the copyleft depends packages linked in."""
     out = []
-    for pkg in sorted(SOURCE_WITH_RELEASE):
-        if f"depends:{pkg}" not in owners:
+    for pkg in sorted(COPYLEFT):
+        texts = sorted(e["text"] for e in entries if e["owner"] == f"depends:{pkg}" and e["kind"] == "depends")
+        if not texts:
             continue
-        cand = [r for r in rows if r["kind"] == "source-tarball" and r["owner"] == f"depends:{pkg}"]
-        if len(cand) != 1:
-            fail(f"{platform}: depends:{pkg} is linked but the build carries {len(cand)} source tarballs of it")
-        r = cand[0]
-        p = os.path.normpath(os.path.join(logs, r["path"]))
-        if not p.startswith(os.path.join(logs, "depends-sources") + os.sep) or not os.path.isfile(p) or os.path.islink(p):
-            fail(f"{platform}: source tarball {r['path']} of depends:{pkg} missing from the build artifact")
-        h = sha256(p)
-        pin = pinned_hash(checkout, pkg)
-        stamped = {e["source"].get("source_sha256") for e in entries if e["owner"] == f"depends:{pkg}" and e["kind"] == "depends"}
-        if h != r["sha256"] or pin is None or h != pin or stamped != {h}:
-            fail(f"{platform}: source tarball {r['path']} has {h}; inventory {r['sha256']}, pin {pin}, licence texts from {sorted(stamped)}")
-        out.append((pkg, os.path.basename(p), p, h))
+        src = depends_source(checkout, pkg)
+        if src is None:
+            fail(f"{platform}: depends:{pkg} is linked but contrib/depends/packages/{pkg}.mk names no version, URL and hash")
+        out.append({"package": pkg, "name": COPYLEFT[pkg], "version": src[0], "licence": licence_name(os.path.join(stage, texts[0])),
+                    "url": src[1], "pinned_sha256": src[2]})
     return out
 
 
 def readme(tm):
-    p = tm["platform"]
-    b = tm["binary"]
-    own = "\n".join(f"    {c['commit'][:12]} {c['subject']}" for c in tm["source"]["own_commits"])
+    p, b = tm["platform"], tm["binary"]
     lic = tm["third_party_licenses"]
-    lines = [
-        f"zephyrd {tm['version_string']} for {p} (personal build)",
-        "",
-        "This is a personal build of the Zephyr daemon (zephyrd) by the maintainer of",
-        f"{tm['workflow']['server_url']}/{tm['workflow']['repository']}. It is not part of zephyr-backports and not an",
-        "official Zephyr release.",
-        "",
-        "SOURCE",
-        f"  Commit {tm['source']['commit']}; the binary reports {tm['version_string']}.",
-        f"  Base: the signed zephyr-backports tag {tm['base']['tag']} = {tm['base']['commit']}",
-        f"  (tag signer {tm['base']['signer_primary_fingerprint']}).",
-        f"  Own commits above the base, each signed by {tm['own_commit_signer_primary_fingerprint']}:",
-        own,
-        f"  Built by {tm['run_url']}",
-        f"  ({tm['workflow']['event_name']} on {tm['workflow']['ref']}, run {tm['workflow']['run_id']} attempt {tm['workflow']['run_attempt']}).",
+    wrap = lambda t, ind="": textwrap.wrap(t, 90, initial_indent=ind, subsequent_indent=ind)
+    lines = [f"zephyrd {tm['release']} for {LABEL[p]}", ""] + wrap(
+        "My personal build of the Zephyr daemon. It is not part of zephyr-backports and not an official Zephyr "
+        f"release. Source: {tm['workflow']['server_url']}/{tm['workflow']['repository']}") + [""] + wrap(
+        f"It is the signed zephyr-backports tag {tm['base']['tag']} plus my own commits, up to commit "
+        f"{tm['source']['commit']}. The binary reports {tm['version_string']}. {BUILD_NOTE}") + [
         "",
         "VERIFY",
-        "  1. gpg --verify SHA256SUMS.asc   (SHA256SUMS.asc is the clear-signed SHA256SUMS; maintainer key,",
-        f"     primary fingerprint {tm['own_commit_signer_primary_fingerprint']}; see the repository README)",
-        "  2. sha256sum -c --ignore-missing SHA256SUMS",
-        f"  3. The binary in this archive has SHA256 {b['sha256']} ({tm['archive']['name']}",
-        f"     names it in {tm['manifest_name']}); {b['name']} --version prints a line ending in ({tm['version_string']}).",
+        f"  gpg --verify SHA256SUMS.asc   (my key: {tm['own_commit_signer_primary_fingerprint']})",
+        "  sha256sum -c SHA256SUMS",
+        f"  {b['name']} in this archive has SHA256 {b['sha256']}.",
         "",
         "REPLACE AN UPSTREAM ZEPHYRD",
-        "  1. Stop the running daemon (its exit command or its service) and wait until it has exited.",
-        "  2. Keep the data directory as it is.",
-        f"  3. Replace the {b['name']} binary with this one; keep the old one.",
-        "  4. Start it with the same paths, ports and options as before.",
-        "  The RPC interface, the P2P protocol and the database format are upstream's; the version number stays 2.3.0.",
-        "",
-        "WHAT THE HOSTED RUNNERS OF THIS RUN TESTED",
-    ] + [f"  - {t}" for t in tm["tested"]] + [
-        f"  Not tested by this run: {tm['not_tested']}. A full mainnet sync and a database resume",
-        "  test of the Linux x86_64 binary are separate steps before a release (see the release notes).",
+        "  Stop it, keep its data directory, put this binary in its place and start it with the",
+        "  same options. RPC, P2P protocol and database format are upstream's.",
     ]
     if REPLACE_NOTE[p]:
-        lines += ["", "NOTE", "  " + REPLACE_NOTE[p]]
-    lines += ["", "LICENCES",
-              "  LICENSE is the source tree's licence; THIRD-PARTY-LICENSES/ holds the texts of everything linked",
-              f"  into {b['name']}, listed in THIRD-PARTY-LICENSES/INDEX.txt. Status: {lic['status']}."]
-    for st in tm["source_tarballs"]:
-        lines += [f"  {st['file']}, published next to this archive and listed in SHA256SUMS, is the source code of",
-                  f"  {st['name']} exactly as the build fetched and hash-checked it (SHA256 {st['sha256']}); it is",
-                  f"  published with the binary because {st['name']} is linked into {b['name']} under the licence in",
-                  f"  {st['licence_text']}."]
+        lines += wrap(REPLACE_NOTE[p], "  ")
+    lines += ["", "TESTED FOR THIS PLATFORM, ON GITHUB'S HOSTED RUNNERS"] + [f"  - {t}" for t in tm["tested"]]
+    lines += wrap(f"Not tested: {tm['not_tested']}. The release notes say what else I tested.", "  ") + [
+        "", "LICENCES",
+        f"  LICENSE is the source tree's licence. THIRD-PARTY-LICENSES/ holds the texts of everything",
+        f"  linked into {b['name']}, listed in INDEX.txt. Status: {lic['status']}."]
+    if tm["copyleft"]:
+        lines += [f"  Copyleft libraries linked into {b['name']}, built from these sources:"]
+        for c in tm["copyleft"]:
+            lines += [f"    {c['name']} {c['version']}, {c['licence']}", f"      {c['url']}", f"      SHA256 {c['pinned_sha256']}"]
     if lic["status"] != "complete":
         lines += ["  NOT ESTABLISHED: this archive must not be released until these are resolved:"] + \
                  [f"    - {r}" for r in lic["reasons"]]
@@ -442,6 +435,13 @@ def main():
         fail("a local build is never packaged")
     epoch = first["source"]["commit_time"]
     vs = "v" + version
+    try:
+        release = open(os.path.join(checkout, "contrib", "myzephyr", "RELEASE"), encoding="utf-8").read()
+    except OSError:
+        fail("the checkout has no contrib/myzephyr/RELEASE")
+    if not RELEASE_RE.fullmatch(release.rstrip("\n")) or release.count("\n") != 1 or not release.endswith("\n"):
+        fail(f"contrib/myzephyr/RELEASE is {release!r}, expected one line v<x.y.z>-sec.<n>-my.<n>")
+    release = release.rstrip("\n")
     own = [{"commit": c["commit"], "subject": git(checkout, "log", "-1", "--format=%s", c["commit"]), "paths": c["paths"]}
            for c in first["source"]["own_commits"]]
 
@@ -449,36 +449,21 @@ def main():
     work = tempfile.mkdtemp(prefix="release-set-")
     old_umask = os.umask(0o022)
     try:
-        sums = {}
+        sums, manifests = {}, []
         for plat in sorted(PLATFORMS):
             target, binary, fmt = PLATFORMS[plat]
             m, art = mans[plat], arts[plat]
-            top = f"zephyrd-{vs}-{plat}"
+            top = f"zephyrd-{release}-{plat}"
             stage = os.path.join(work, plat, top)
             os.makedirs(stage)
             shutil.copyfile(os.path.join(art, binary), os.path.join(stage, binary))
             os.chmod(os.path.join(stage, binary), 0o755)
             shutil.copyfile(os.path.join(checkout, "LICENSE"), os.path.join(stage, "LICENSE"))
             status, entries, reasons = licences(plat, art, m, checkout, stage)
-            tarballs = []
-            for pkg, fname, path, h in source_tarballs(plat, art, checkout, entries):
-                dst = os.path.join(a.out, fname)
-                if fname in sums:
-                    if sums[fname] != h:
-                        fail(f"{plat}: source tarball {fname} differs from the one of another platform")
-                else:
-                    shutil.copyfile(path, dst)
-                    if sha256(dst) != h:
-                        fail(f"{plat}: copy of {fname} changed")
-                    sums[fname] = h
-                texts = sorted(e["text"] for e in entries if e["owner"] == f"depends:{pkg}")
-                tarballs.append({"package": pkg, "name": SOURCE_WITH_RELEASE[pkg], "owner": f"depends:{pkg}", "file": fname,
-                                 "sha256": h, "size": os.path.getsize(dst), "pinned_sha256": pinned_hash(checkout, pkg),
-                                 "licence_text": texts[0] if texts else None})
             archive = f"{top}.{fmt}"
             mname = f"{top}.manifest.json"
             tm = {
-                "schema": SCHEMA, "platform": plat, "target": target, "version_string": vs,
+                "schema": SCHEMA, "platform": plat, "target": target, "release": release, "version_string": vs,
                 "archive": {"name": archive, "format": fmt, "top_directory": top, "sha256": None, "size": None},
                 "binary": {"name": binary, "path": f"{top}/{binary}", "sha256": m["artifact"]["sha256"], "size": m["artifact"]["size"]},
                 "build_manifest_sha256": sha256(os.path.join(art, "manifest.json")), "build_manifest": m,
@@ -487,7 +472,7 @@ def main():
                 "workflow": m["workflow"], "run_url": a.run_url,
                 "tested": TESTED[plat], "not_tested": NOT_TESTED[plat],
                 "third_party_licenses": {"status": status, "reasons": reasons, "entries": entries},
-                "source_tarballs": tarballs,
+                "copyleft": copyleft(plat, entries, checkout, stage),
                 "manifest_name": mname, "source_date_epoch": epoch,
             }
             with open(os.path.join(stage, "README.txt"), "w", encoding="utf-8") as f:
@@ -519,12 +504,13 @@ def main():
             with open(os.path.join(a.out, mname), "w", encoding="utf-8") as f:
                 json.dump(tm, f, indent=2, sort_keys=True)
                 f.write("\n")
-            sums[archive], sums[mname] = tm["archive"]["sha256"], sha256(os.path.join(a.out, mname))
+            sums[archive] = tm["archive"]["sha256"]
+            manifests.append(mname)
             print(f"{archive}  {tm['archive']['sha256']}  licences {status}" + (f" ({len(reasons)} open)" if reasons else ""))
             for r in reasons:
                 print(f"::warning title=licences {plat}::not established: {r}")
         listed = sorted(n for n in os.listdir(a.out))
-        if listed != sorted(sums):
+        if listed != sorted(list(sums) + manifests):
             fail(f"unexpected files in {a.out}: {listed}")
         with open(os.path.join(a.out, "SHA256SUMS"), "w", encoding="utf-8") as f:
             f.write("".join(f"{sums[n]}  {n}\n" for n in sorted(sums)))
